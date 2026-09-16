@@ -17,7 +17,7 @@ class GuardService:
         # 1. TỪ KHÓA CẤM - TÁCH THÀNH 2 NHÓM
         # ==========================================
         # 1a. HARD: cụm từ gần như CHẮC CHẮN là tấn công (jailbreak/leakage),
-        #     hiếm khi xuất hiện tự nhiên trong câu hỏi về thuế -> chặn ngay khi khớp 1 cụm.
+        #     hiếm khi xuất hiện tự nhiên trong câu hỏi về BHXH -> chặn ngay khi khớp 1 cụm.
         self.hard_forbidden_keywords = [
             "ignore previous", "ignore all previous", "disregard previous",
             "system prompt", "system_prompt", "hướng dẫn hệ thống",
@@ -27,10 +27,9 @@ class GuardService:
             "viết mã độc", "exploit", "payload",
         ]
 
-        # 1b. SOFT: cụm từ MƠ HỒ - có thể xuất hiện tự nhiên trong câu hỏi thật
-        #     (VD "bỏ qua thời hạn nộp thuế", "đóng vai chủ hộ kinh doanh").
+        # 1b. SOFT: cụm từ MƠ HỒ - có thể xuất hiện tự nhiên trong câu hỏi thật.
         #     Không chặn ngay chỉ vì khớp 1 từ soft - chỉ dùng làm tín hiệu, kết hợp
-        #     với việc câu hỏi KHÔNG có từ khóa thuế nào (xem check_input, lớp 3).
+        #     với việc câu hỏi KHÔNG có từ khóa BHXH nào (xem check_input, lớp 3).
         self.soft_forbidden_keywords = [
             "bỏ qua", "quên đi", "quên hết", "quên tất cả", "từ bây giờ",
             "hướng dẫn trước đó", "câu lệnh ban đầu", "đóng vai", "hoá thân",
@@ -70,30 +69,37 @@ class GuardService:
             re.compile(r"<\s*(system|instruction|admin)\s*>", re.IGNORECASE),
         ]
 
-        # 5. Từ khóa cho needs_rag - dùng WORD-LEVEL matching (không cộng dồn substring)
+        # 5. Từ khóa cho needs_rag - dùng WORD-LEVEL matching (không cộng dồn substring).
+        #    Đặc tả đầy đủ: docs/bhxh_keyphrase_spec.md mục 4.
         self.core_keywords = [
-            "thuế", "vat", "gtgt", "tncn", "ttđb", "thuế xuất nhập khẩu", "chịu thuế",
-            "kê khai", "khai báo", "khai thuế", "nộp thuế", "hoàn thuế", "quyết toán", "tờ khai",
-            "hóa đơn", "giá trị gia tăng", "thu nhập cá nhân", "loại thuế", "thuế suất",
-            "hộ kinh doanh", "cá nhân kinh doanh", "mã số thuế", "mst", "tính thuế",
+            "bảo hiểm xã hội", "bhxh", "bhxh bắt buộc", "bhxh tự nguyện",
+            "sổ bảo hiểm xã hội", "mã số bhxh",
+            "chế độ ốm đau", "chế độ thai sản", "chế độ hưu trí", "chế độ tử tuất",
+            "lương hưu", "trợ cấp một lần", "trợ cấp hưu trí xã hội",
+            "bảo hiểm hưu trí bổ sung", "mức đóng bhxh", "tỷ lệ đóng bhxh",
+            "tiền lương đóng bhxh", "thời gian đóng bhxh", "rút bhxh một lần",
+            "hưởng bhxh một lần", "tuổi nghỉ hưu", "suy giảm khả năng lao động",
+            "trợ cấp tuất", "mai táng phí", "tham gia bhxh",
+            "cơ quan bảo hiểm xã hội", "quỹ bảo hiểm xã hội",
         ]
         self.context_keywords = [
-            "thu chi", "doanh thu", "chi phí", "lợi nhuận", "kế toán",
-            "khấu trừ", "miễn giảm", "luật", "nghị định", "thông tư",
-            "thu nhập", "mặt hàng", "xuất khẩu", "nhập khẩu", "bán hàng", "kinh doanh",
-            "phạt", "chậm nộp", "trốn thuế", "đóng thuế", "nghĩa vụ", "dịch vụ", "spa",
-            "làm đẹp", "thẩm mỹ", "sửa chữa", "tư vấn", "xây dựng", "gia công", "sản xuất",
-            "bán lẻ", "bán buôn", "nội dung số", "cho thuê tài sản", "đại lý bảo hiểm",
-            "xổ số", "đa cấp", "lưu trú", "vận tải", "nhà hàng", "quán ăn", "cafe",
-            "sản phẩm số", "quảng cáo trực tuyến", "cá cược", "giải trí",
+            "người lao động", "người sử dụng lao động", "hợp đồng lao động",
+            "tiền lương", "nghỉ việc", "nghỉ thai sản", "sinh con", "nuôi con nuôi",
+            "thai sản", "tai nạn lao động", "bệnh nghề nghiệp", "nghỉ hưu", "về hưu",
+            "trốn đóng", "chậm đóng", "nợ bảo hiểm", "truy thu",
+            "hồ sơ hưởng", "thủ tục hưởng", "giải quyết chế độ",
+            "khiếu nại", "tố cáo", "xử phạt", "thanh tra",
+            "doanh nghiệp", "công ty", "viên chức", "công chức", "lao động tự do",
+            "thân nhân", "bảo hiểm y tế", "bảo hiểm thất nghiệp",
+            "luật", "nghị định", "thông tư",
         ]
 
-        # Danh sách từ tiếng Việt không dấu phổ biến, mở rộng hơn bản gốc, dùng để
-        # nhận diện tiếng Việt gõ không dấu khi kiểm tra ngôn ngữ đầu ra.
+        # Danh sách từ tiếng Việt không dấu phổ biến, dùng để nhận diện tiếng Việt
+        # gõ không dấu khi kiểm tra ngôn ngữ đầu ra.
         self._vn_no_accent_words = {
             "cho", "cua", "toi", "khong", "co", "ve", "duoc", "trong", "va", "nhung",
             "la", "cac", "mot", "nguoi", "nay", "the", "neu", "thi", "khi", "voi",
-            "theo", "nam", "thang", "dong", "tien", "thue", "luat", "quy", "dinh",
+            "theo", "nam", "thang", "dong", "tien", "bao", "hiem", "quy", "dinh",
             "ban", "hay", "nhu", "sau", "truoc", "den", "tu", "den", "hoac", "bi",
         }
 
@@ -110,7 +116,7 @@ class GuardService:
         if not text:
             return ""
         text = unicodedata.normalize("NFC", text)
-        text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)
+        text = re.sub(r"[​‌‍﻿]", "", text)
         return text
 
     @staticmethod
@@ -121,7 +127,7 @@ class GuardService:
     def _count_keyword_hits(self, clean_input_words: str, keywords: list[str]) -> set[str]:
         """
         Trả về TẬP HỢP các keyword canonical đã khớp (không cộng dồn theo substring
-        trùng lặp, VD 'nộp thuế' chứa 'thuế' chỉ tính là các match riêng biệt,
+        trùng lặp, VD 'rút bhxh một lần' chứa 'bhxh' chỉ tính là các match riêng biệt,
         nhưng độ điểm được tính theo SỐ KEYWORD KHÁC NHAU khớp, không theo số lần
         substring xuất hiện).
         """
@@ -179,8 +185,8 @@ class GuardService:
                 return False, reason
 
         # Lớp 3b: Từ khóa SOFT -> chỉ chặn khi khớp VÀ câu hỏi không hề chứa
-        # bất kỳ từ khóa thuế nào (core/context) -> giảm false positive cho
-        # câu hỏi thật kiểu "bỏ qua thời hạn nộp thuế thì bị phạt gì".
+        # bất kỳ từ khóa BHXH nào (core/context) -> giảm false positive cho
+        # câu hỏi thật kiểu "bỏ qua thời hạn đóng bhxh thì bị phạt gì".
         soft_hit = None
         for keyword in self.soft_forbidden_keywords:
             stripped_kw = self._strip_for_match(keyword)
@@ -189,10 +195,10 @@ class GuardService:
                 break
 
         if soft_hit:
-            has_tax_context = self._count_keyword_hits(lower_input, self.core_keywords) or \
-                               self._count_keyword_hits(lower_input, self.context_keywords)
-            if not has_tax_context:
-                reason = f"Phát hiện từ khóa nghi vấn '{soft_hit}' không kèm ngữ cảnh thuế"
+            has_bhxh_context = self._count_keyword_hits(lower_input, self.core_keywords) or \
+                                self._count_keyword_hits(lower_input, self.context_keywords)
+            if not has_bhxh_context:
+                reason = f"Phát hiện từ khóa nghi vấn '{soft_hit}' không kèm ngữ cảnh bảo hiểm xã hội"
                 logger.warning(f"BỊ CHẶN: {reason}")
                 return False, reason
 
@@ -225,7 +231,7 @@ class GuardService:
         """
         BƯỚC 4: Xác định câu hỏi có cần tra cứu RAG hay không, dùng scoring
         dựa trên SỐ KEYWORD KHÁC NHAU khớp (word-boundary), không cộng dồn
-        theo substring trùng lặp (VD 'nộp thuế' không tính thêm cho 'thuế').
+        theo substring trùng lặp.
         """
         if not user_input or not user_input.strip():
             return False, "Câu hỏi trống"
@@ -244,7 +250,7 @@ class GuardService:
         if core_hits and score >= 3:
             return True, ""
         else:
-            reason = "Câu hỏi không liên quan đến thuế cho hộ kinh doanh/cá nhân kinh doanh"
+            reason = "Câu hỏi không liên quan đến bảo hiểm xã hội"
             logger.info(f"BỊ CHẶN (needs_rag): {reason}")
             return False, reason
 
@@ -254,11 +260,11 @@ class GuardService:
 
     def check_rag_context(self, retrieved_chunks: list[str]) -> tuple[bool, str | None]:
         """
-        MỚI: Kiểm tra nội dung các đoạn tài liệu được RAG truy xuất TRƯỚC KHI
-        đưa vào prompt của LLM chính. Đây là lớp phòng thủ chống
-        "indirect prompt injection" - kẻ tấn công chèn chỉ thị độc hại vào
-        nguồn dữ liệu (văn bản luật giả mạo, tài liệu bị chèn thêm) để chiếm
-        quyền điều khiển AI qua đường context thay vì qua user_input.
+        Kiểm tra nội dung các đoạn tài liệu được RAG truy xuất TRƯỚC KHI đưa vào
+        prompt của LLM chính. Đây là lớp phòng thủ chống "indirect prompt
+        injection" - kẻ tấn công chèn chỉ thị độc hại vào nguồn dữ liệu (văn bản
+        luật giả mạo, tài liệu bị chèn thêm) để chiếm quyền điều khiển AI qua
+        đường context thay vì qua user_input.
 
         Trả về (True, None) nếu context an toàn để dùng, (False, lý do) nếu
         nghi ngờ có chỉ thị độc hại chèn trong tài liệu.

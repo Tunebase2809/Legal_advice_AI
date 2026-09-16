@@ -6,7 +6,6 @@ import uuid
 import hashlib
 import logging
 import requests
-import pandas as pd
 from collections import defaultdict
 from functools import wraps
 from dotenv import load_dotenv
@@ -16,8 +15,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from services.gemini_service import GeminiService
 from services.supabase_service import SupabaseService
-from services.tax_schedule_service import TaxScheduleService
-from services.tax_calculator import TaxCalculator
 from services.guard_service import GuardService
 from services.encryption_service import EncryptionService
 
@@ -96,8 +93,6 @@ def limit_requests(max_requests=20, window_seconds=60):
 # Khởi tạo các dịch vụ
 gemini_service = GeminiService()
 supabase_service = SupabaseService()
-tax_schedule_service = TaxScheduleService()
-tax_calculator = TaxCalculator()
 guard_service = GuardService()
 encryption_service = EncryptionService()
 
@@ -154,100 +149,19 @@ def safe_upload_path(user_token: str, filename: str) -> str:
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "ok", "message": "AI Tax Assistant Backend is running!"})
-
-@app.route('/api/tax-rates', methods=['GET'])
-def get_tax_rates():
-    """Trả về bảng tỷ lệ thuế từ hệ thống Backend để Frontend tự động tính toán (Tránh trùng lặp logic)"""
-    rates = tax_calculator.tax_rates
-    
-    display_info = {}
-    for cat, meta in tax_calculator.category_metadata.items():
-        r = rates.get(cat, {"gtgt": 0, "tncn": 0})
-        gtgt_val = r.get("gtgt", 0) * 100
-        tncn_val = r.get("tncn", 0) * 100
-        gtgt_pct = f"{gtgt_val:.0f}%" if float(gtgt_val).is_integer() else f"{gtgt_val:.1f}%"
-        tncn_pct = f"{tncn_val:.0f}%" if float(tncn_val).is_integer() else f"{tncn_val:.1f}%"
-        group_str = f"{meta['group_name']} (GTGT {gtgt_pct}, TNCN {tncn_pct})"
-            
-        display_info[cat] = {
-            "name": meta["name"],
-            "group": group_str
-        }
-    
-    rates_data = {}
-    grouped_categories = {}
-    for cat, r in rates.items():
-        info = display_info.get(cat, {"name": cat, "group": "Hoạt động kinh doanh khác"})
-        rates_data[cat] = {
-            "name": info["name"],
-            "group": info["group"],
-            "gtgt": r.get("gtgt", 0),
-            "tncn": r.get("tncn", 0),
-            "total": r.get("gtgt", 0) + r.get("tncn", 0)
-        }
-        
-        group = info["group"]
-        if group not in grouped_categories:
-            grouped_categories[group] = []
-        grouped_categories[group].append({"key": cat, "name": info["name"]})
-        
-    return jsonify({
-        "rates": rates_data,
-        "grouped_categories": grouped_categories,
-        "milestones": tax_calculator.revenue_milestones,
-        "net_rates": tax_calculator.tncn_rates_net
-    })
+    return jsonify({"status": "ok", "message": "AI BHXH Assistant Backend is running!"})
 
 @app.route('/api/chat', methods=['POST'])
 @limit_requests(20, 60)
 def chat():
     # Nhận dữ liệu dạng Form Data (Hỗ trợ File)
     user_message = request.form.get('message', '')
-    revenue_str = request.form.get('revenue', '0')
-    try:
-        revenue = float(revenue_str) if revenue_str else 0
-    except ValueError:
-        return jsonify({"error": "Doanh thu (revenue) không hợp lệ"}), 400
-    category = request.form.get('category', 'hoat_dong_khac')
-    
+
     user_token = request.form.get('supabase_token')
     session_id = request.form.get('session_id')
-    
+
     file = request.files.get('file')
-    is_tax_form = request.form.get('is_tax_form') == 'true'
-    method = request.form.get('method', 'doanh_thu')
-    expenses_str = request.form.get('expenses', '0')
-    try:
-        expenses = float(expenses_str) if expenses_str else 0
-    except ValueError:
-        return jsonify({"error": "Chi phí (expenses) không hợp lệ"}), 400
-    
-    if is_tax_form and revenue > 0:
-        # Tự động tạo user_message từ backend để tránh trùng lặp logic bên frontend
-        rates_data = tax_calculator.tax_rates
-        meta = tax_calculator.category_metadata.get(category, {"name": category})
-        cat_text = meta.get("name", category)
-        
-        method_text = "Doanh thu" if method == "doanh_thu" else "Thu nhập tính thuế"
-        
-        # Định dạng tiền tệ
-        def format_vnd(amount):
-            return f"{amount:,.0f} VNĐ".replace(",", ".")
-            
-        msg_parts = [
-            f'**📝 Tính thuế cho tôi theo phương pháp "{method_text}":**',
-            f'*   **Doanh thu**: {format_vnd(revenue)}'
-        ]
-        
-        if method == 'thu_nhap':
-            msg_parts.append(f'*   **Chi phí hợp lý**: {format_vnd(expenses)}')
-            
-        msg_parts.append(f'*   **Ngành nghề**: {cat_text}')
-        msg_parts.append(f'👉 *Hãy giải thích tóm tắt bảng tính thuế này.*')
-        
-        user_message = "\n".join(msg_parts)
-    
+
     if file:
         file.seek(0, os.SEEK_END)
         file_size = file.tell()
@@ -280,9 +194,9 @@ def chat():
         if user_message:
             import re
             clean_title = re.sub(r'[#\*_\`\-]', '', user_message).strip()
-            title = clean_title[:40] + "..." if clean_title else "Kế hoạch đóng Thuế"
+            title = clean_title[:40] + "..." if clean_title else "Tư vấn Bảo hiểm xã hội"
         else:
-            title = "Kế hoạch đóng Thuế"
+            title = "Tư vấn Bảo hiểm xã hội"
         session_id = supabase_service.create_session(title, user_token)
         
     # 3. Xử lý File Upload
@@ -309,7 +223,7 @@ def chat():
     if user_token and session_id:
         supabase_service.save_message(session_id, 'user', user_message, user_token, file_name=file_name, file_type=file_type)
         
-    # 5. RAG - Lấy ngữ cảnh luật thuế
+    # 5. RAG - Lấy ngữ cảnh luật BHXH
     legal_context = ""
     sources = []
     needs_rag_flag = False
@@ -319,32 +233,15 @@ def chat():
         if needs_rag_flag:
             # Chuyển đổi câu hỏi của user thành Vector
             query_vector = gemini_service.embed_text(user_message)
-            legal_context, sources = supabase_service.search_tax_laws(query_vector)
-    
-    # 6. Tax Calculator - Tính thuế nếu có dữ liệu doanh thu
-    tax_result = None
-    if revenue > 0:
-        tax_result = tax_calculator.calculate_tax(float(revenue), category, method, expenses)
-        
-        if not tax_result.get("is_taxable"):
-            legal_context += f"\n\n[HỆ THỐNG ĐÃ TÍNH TOÁN - BẮT BUỘC BÁO CHO NGƯỜI DÙNG LÝ DO NÀY]:\n{tax_result.get('reason')}"
-        else:
-            tax_result_md = f"""- Thuế GTGT: {tax_result.get('tax_gtgt', 0):,.0f} VNĐ
-- Thuế TNCN: {tax_result.get('tax_tncn', 0):,.0f} VNĐ
-- Tổng cộng thuế phải nộp: {tax_result.get('total_tax', 0):,.0f} VNĐ
+            legal_context, sources = supabase_service.search_legal_documents(query_vector)
 
-GIẢI THÍCH CHI TIẾT:
-{tax_result.get('explanation', '')}"""
-            legal_context += f"\n\n[HỆ THỐNG ĐÃ TÍNH TOÁN - BẮT BUỘC SỬ DỤNG CHÍNH XÁC CÁC SỐ TIỀN VÀ BÊ NGUYÊN PHẦN GIẢI THÍCH DƯỚI ĐÂY ĐỂ TRẢ LỜI, TUYỆT ĐỐI KHÔNG TỰ TÍNH LẠI HOẶC SỬA TỶ LỆ]:\n{tax_result_md.replace(',', '.')}"
-        
-    # 7. Gemini API - Tư vấn (Đưa file vào phân tích nếu có)
+    # 6. Gemini API - Tư vấn (Đưa file vào phân tích nếu có)
     ai_response = gemini_service.generate_response(
-        user_message, 
-        context=legal_context, 
-        file_path=file_path, 
-        has_tax_result=(tax_result is not None)
+        user_message,
+        context=legal_context,
+        file_path=file_path
     )
-    
+
     # Nếu lỗi API hoặc từ chối trả lời thì Nguồn tham chiếu = 0
     empty_sources_reason = None
     if is_relevant and not needs_rag_flag:
@@ -371,19 +268,18 @@ GIẢI THÍCH CHI TIẾT:
             sources = []
             empty_sources_reason = "Chặn phản hồi"
         
-    # 8. Lưu tin nhắn của AI
+    # 7. Lưu tin nhắn của AI
     if user_token and session_id:
-        supabase_service.save_message(session_id, 'assistant', ai_response, user_token, tax_snapshot=tax_result, sources=sources)
-    
+        supabase_service.save_message(session_id, 'assistant', ai_response, user_token, sources=sources)
+
     response = {
         "text": ai_response,
-        "tax_table": tax_result,
         "session_id": session_id,
         "sources": sources,
         "rag_bypassed_reason": empty_sources_reason,
         "user_message": user_message
     }
-    
+
     return jsonify(response)
 
 @app.route('/api/document', methods=['GET'])
@@ -425,7 +321,7 @@ def get_document():
             "title": f"ilike.*{db_title}*",
             "limit": 1
         }
-        resp_exact = requests.get(f"{supabase_service.url}/rest/v1/tax_documents", headers=headers, params=params_exact, timeout=5)
+        resp_exact = requests.get(f"{supabase_service.url}/rest/v1/legal_documents", headers=headers, params=params_exact, timeout=5)
         if resp_exact.status_code == 200:
             results_exact = resp_exact.json()
             if results_exact and len(results_exact) > 0:
@@ -441,7 +337,7 @@ def get_document():
             "limit": 50
         }
         
-        resp = requests.get(f"{supabase_service.url}/rest/v1/tax_documents", headers=headers, params=params, timeout=5)
+        resp = requests.get(f"{supabase_service.url}/rest/v1/legal_documents", headers=headers, params=params, timeout=5)
         
         if resp.status_code == 200:
             results = resp.json()
@@ -483,39 +379,6 @@ def get_document():
         logger.error(f"Error fetching document: {e}")
         
     return jsonify({"error": "Không tìm thấy nội dung văn bản này."}), 404
-
-@app.route('/api/calculate-tax', methods=['POST'])
-@limit_requests(30, 60)
-def calculate_tax_only():
-    if request.is_json:
-        data = request.json
-    else:
-        data = request.form
-
-    revenue_str = data.get('revenue', '0')
-    try:
-        revenue = float(revenue_str) if revenue_str else 0
-    except ValueError:
-        revenue = 0
-
-    category = data.get('category', 'hoat_dong_khac')
-    method = data.get('method', 'doanh_thu')
-    
-    expenses_str = data.get('expenses', '0')
-    try:
-        expenses = float(expenses_str) if expenses_str else 0
-    except ValueError:
-        expenses = 0
-    
-    if revenue <= 0:
-        return jsonify({"error": "Vui lòng nhập doanh thu lớn hơn 0"}), 400
-        
-    tax_result = tax_calculator.calculate_tax(revenue, category, method, expenses)
-    
-    return jsonify({
-        "tax_table": tax_result,
-        "message": "Tính toán thành công"
-    })
 
 @app.route('/api/files', methods=['GET'])
 @limit_requests(30, 60)
@@ -679,401 +542,6 @@ def delete_file(filename):
         return jsonify({"message": f"Deleted {filename}"})
     return jsonify({"error": "File not found"}), 404
 
-@app.route('/api/business-settings', methods=['GET'])
-@limit_requests(30, 60)
-def get_business_settings():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.args.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    settings = supabase_service.get_business_settings(user_token)
-    return jsonify(settings)
-
-@app.route('/api/business-settings', methods=['POST'])
-@limit_requests(30, 60)
-def update_business_settings():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.json.get('supabase_token') if (request.is_json and request.json) else request.form.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    if request.is_json:
-        data = request.json
-    else:
-        data = request.form
-        
-    business_name = data.get('business_name')
-    business_category = data.get('business_category')
-    declaration_type = data.get('declaration_type', 'quy')
-    
-    if not business_name or not business_category:
-        return jsonify({"error": "business_name and business_category are required"}), 400
-        
-    success = supabase_service.update_business_settings(user_token, business_name, business_category, declaration_type)
-    if success:
-        return jsonify({"message": "Business settings updated successfully"})
-    else:
-        return jsonify({"error": "Failed to update business settings"}), 500
-
-@app.route('/api/transactions', methods=['GET'])
-@limit_requests(30, 60)
-def get_transactions():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.args.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    transactions = supabase_service.get_transactions(user_token)
-    return jsonify(transactions)
-
-@app.route('/api/transactions', methods=['POST'])
-@limit_requests(30, 60)
-def add_transaction():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.json.get('supabase_token') if (request.is_json and request.json) else request.form.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    if request.is_json:
-        data = request.json
-    else:
-        data = request.form
-        
-    date = data.get('date')
-    amount_val = data.get('amount')
-    description = data.get('description', '')
-    
-    if not date or amount_val is None:
-        return jsonify({"error": "date and amount are required"}), 400
-        
-    try:
-        amount = float(amount_val)
-    except ValueError:
-        return jsonify({"error": "amount must be a number"}), 400
-        
-    transaction = supabase_service.add_transaction(user_token, date, amount, description)
-    if transaction:
-        return jsonify(transaction)
-    else:
-        return jsonify({"error": "Failed to add transaction"}), 500
-
-@app.route('/api/transactions/<transaction_id>', methods=['PUT'])
-@limit_requests(30, 60)
-def update_transaction(transaction_id):
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.json.get('supabase_token') if (request.is_json and request.json) else request.form.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    if request.is_json:
-        data = request.json
-    else:
-        data = request.form
-        
-    date = data.get('date')
-    amount_val = data.get('amount')
-    description = data.get('description', '')
-    
-    if not date or amount_val is None:
-        return jsonify({"error": "date and amount are required"}), 400
-        
-    try:
-        amount = float(amount_val)
-    except ValueError:
-        return jsonify({"error": "amount must be a number"}), 400
-        
-    success = supabase_service.update_transaction(user_token, transaction_id, date, amount, description)
-    if success:
-        return jsonify({"message": "Transaction updated successfully"})
-    else:
-        return jsonify({"error": "Failed to update transaction"}), 500
-
-@app.route('/api/transactions/<transaction_id>', methods=['DELETE'])
-@limit_requests(30, 60)
-def delete_transaction(transaction_id):
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.args.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    success = supabase_service.delete_transaction(user_token, transaction_id)
-    if success:
-        return jsonify({"message": "Transaction deleted successfully"})
-    else:
-        return jsonify({"error": "Failed to delete transaction"}), 500
-
-@app.route('/api/transactions/template', methods=['GET'])
-@limit_requests(30, 60)
-def download_transaction_template():
-    try:
-        # Tạo dữ liệu mẫu cho template
-        data = {
-            "Ngay (DD/MM/YYYY)": ["01/06/2026", "01/06/2026"],
-            "Loai (Thu/Chi)": ["Thu", "Chi"],
-            "SoTien": [57600000, 12850000],
-            "DienGiai": ["Doanh thu ban le tap hoa", "Mua tui dung va bao bi"]
-        }
-        df = pd.DataFrame(data)
-        
-        # Ghi vào BytesIO dưới dạng file xlsx
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
-        output.seek(0)
-        
-        return send_file(
-            output,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name="mau_so_tay_giao_dich.xlsx"
-        )
-    except Exception as e:
-        logger.error(f"Lỗi khi tạo file mẫu xlsx: {e}")
-        return jsonify({"error": "Lỗi hệ thống khi tạo tệp tin mẫu. Vui lòng thử lại sau."}), 500
-
-@app.route('/api/transactions/ocr', methods=['POST'])
-@limit_requests(20, 60)
-def upload_ocr_transaction():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.form.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    file = request.files.get('file')
-    if not file:
-        return jsonify({"error": "Không tìm thấy tệp tin được tải lên."}), 400
-        
-    # 1. Kiểm tra kích thước tệp tin (tối đa 2MB)
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
-    max_size = 2 * 1024 * 1024  # 2MB
-    if file_size > max_size:
-        return jsonify({"error": "Kích thước tệp tin không được vượt quá 2MB."}), 400
-        
-    # Lưu tệp tin tạm thời - dùng tên hoàn toàn ngẫu nhiên (uuid) trong thư mục
-    # riêng của user thay vì ghép trực tiếp file.filename (trước đây dễ bị Path
-    # Traversal qua tên file, và có nguy cơ 2 user trùng tên+timestamp giây ghi
-    # đè lẫn nhau khi xử lý đồng thời).
-    file_name = file.filename
-    ext = os.path.splitext(sanitize_filename(file_name))[1].lower()
-    temp_filename = f"ocr_{uuid.uuid4().hex}{ext}"
-    user_dir = get_user_upload_dir(user_token)
-    file_path = os.path.join(user_dir, temp_filename)
-    
-    file.save(file_path)
-    encryption_service.encrypt_file(file_path)
-    
-    saved_transactions = []
-    
-    try:
-        # Xử lý tệp Excel/CSV mẫu trực tiếp (Zero API Cost)
-        if ext in ['.csv', '.xlsx', '.xls']:
-            # Giải mã trước khi đọc
-            decrypted_data = encryption_service.decrypt_file(file_path)
-            
-            if ext == '.csv':
-                df = pd.read_csv(io.BytesIO(decrypted_data))
-            else:
-                df = pd.read_excel(io.BytesIO(decrypted_data))
-                
-            # Chuẩn hóa tên cột để kiểm tra
-            expected_cols = ['ngay(dd/mm/yyyy)', 'loai(thu/chi)', 'sotien', 'diengiai']
-            actual_cols = [str(c).strip().lower().replace(" ", "") for c in df.columns]
-            
-            if not all(col in actual_cols for col in expected_cols):
-                return jsonify({
-                    "error": "Cấu trúc file không đúng mẫu. File Excel/CSV phải chứa chính xác các cột: Ngay (DD/MM/YYYY), Loai (Thu/Chi), SoTien, DienGiai."
-                }), 400
-                
-            col_map = {actual_cols[i]: df.columns[i] for i in range(len(actual_cols))}
-            
-            for index, row in df.head(500).iterrows():
-                raw_date = str(row[col_map['ngay(dd/mm/yyyy)']]).strip()
-                type_val = str(row[col_map['loai(thu/chi)']]).strip().lower()
-                amount_val = row[col_map['sotien']]
-                desc_val = str(row[col_map['diengiai']]).strip()
-                
-                # Bỏ qua các hàng trống
-                if raw_date == 'nan' or not raw_date:
-                    continue
-                    
-                # Chuyển đổi định dạng ngày từ DD/MM/YYYY sang YYYY-MM-DD
-                date_val = raw_date
-                try:
-                    if ' ' in raw_date:
-                        date_part = raw_date.split(' ')[0]
-                    else:
-                        date_part = raw_date
-                        
-                    if '/' in date_part:
-                        parts = date_part.split('/')
-                        if len(parts) == 3:
-                            date_val = f"{int(parts[2]):04d}-{int(parts[1]):02d}-{int(parts[0]):02d}"
-                    elif '-' in date_part:
-                        parts = date_part.split('-')
-                        if len(parts) == 3:
-                            if len(parts[0]) == 4:
-                                date_val = f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
-                            else:
-                                date_val = f"{int(parts[2]):04d}-{int(parts[1]):02d}-{int(parts[0]):02d}"
-                except Exception:
-                    pass
-                    
-                try:
-                    amount = float(amount_val)
-                except ValueError:
-                    continue
-                    
-                if 'chi' in type_val:
-                    amount = -abs(amount)
-                else:
-                    amount = abs(amount)
-                    
-                new_tx = supabase_service.add_transaction(user_token, date_val, amount, desc_val)
-                if new_tx:
-                    saved_transactions.append(new_tx)
-                    
-            return jsonify({
-                "message": f"Nhập thành công {len(saved_transactions)} giao dịch từ tệp Excel/CSV mẫu!",
-                "transactions": saved_transactions
-            })
-            
-        elif ext in ['.pdf', '.png', '.jpg', '.jpeg', '.webp']:
-            # Gọi Gemini trích xuất hóa đơn bằng AI
-            extracted_data = gemini_service.extract_transactions_from_file(file_path)
-            
-            if not extracted_data or 'transactions' not in extracted_data:
-                return jsonify({"error": "Không thể trích xuất giao dịch từ hóa đơn này bằng AI."}), 500
-                
-            for tx_data in extracted_data['transactions']:
-                date_val = tx_data.get('date')
-                amount_val = tx_data.get('amount', 0)
-                desc_val = tx_data.get('description', '')
-                
-                new_tx = supabase_service.add_transaction(user_token, date_val, amount_val, desc_val)
-                if new_tx:
-                    saved_transactions.append(new_tx)
-                    
-            return jsonify({
-                "message": f"AI trích xuất thành công {len(saved_transactions)} giao dịch từ hóa đơn!",
-                "transactions": saved_transactions
-            })
-            
-        else:
-            return jsonify({"error": "Định dạng tệp không được hỗ trợ. Vui lòng tải lên Excel, CSV, PDF hoặc hình ảnh hóa đơn."}), 400
-            
-    except Exception as e:
-        logger.error(f"Lỗi xử lý file upload giao dịch: {e}")
-        return jsonify({"error": "Lỗi hệ thống khi xử lý tệp tin. Vui lòng thử lại sau."}), 500
-        
-    finally:
-        # Xóa file đã tải lên ngay lập tức để tiết kiệm ổ đĩa và bảo vệ riêng tư
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as clean_err:
-                logger.warning(f"Không thể xóa file tạm sau xử lý: {clean_err}")
-
-@app.route('/api/tax-payments', methods=['POST'])
-@limit_requests(30, 60)
-def update_tax_payment():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.json.get('supabase_token') if (request.is_json and request.json) else request.form.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    if request.is_json:
-        data = request.json
-    else:
-        data = request.form
-        
-    period_key = data.get('period_key')
-    due_date = data.get('due_date')
-    tax_amount = data.get('tax_amount', 0)
-    paid_amount = data.get('paid_amount', 0)
-    paid_date = data.get('paid_date')
-    
-    if not period_key or not due_date:
-        return jsonify({"error": "period_key and due_date are required"}), 400
-        
-    success = tax_schedule_service.update_tax_payment(user_token, period_key, due_date, float(tax_amount), float(paid_amount), paid_date)
-    if success:
-        return jsonify({"message": "Tax payment updated successfully"})
-    else:
-        return jsonify({"error": "Failed to update tax payment"}), 500
-
-@app.route('/api/tax-schedule-periods', methods=['GET'])
-@limit_requests(30, 60)
-def get_tax_schedule_periods_api():
-    user_token = request.headers.get('Authorization')
-    if not user_token:
-        user_token = request.args.get('supabase_token')
-    else:
-        if user_token.startswith("Bearer "):
-            user_token = user_token[7:]
-            
-    if not user_token:
-        return jsonify({"error": "Unauthorized"}), 401
-        
-    transactions = supabase_service.get_transactions(user_token)
-    settings = supabase_service.get_business_settings(user_token)
-    tax_payments = tax_schedule_service.get_tax_payments(user_token)
-    tax_rates = tax_calculator.tax_rates
-    
-    business_category = settings.get('business_category', 'ban_buon_ban_le')
-    declaration_type = settings.get('declaration_type', 'quy')
-    
-    periods = tax_schedule_service.get_tax_schedule_periods(
-        transactions, 
-        declaration_type, 
-        business_category, 
-        tax_payments, 
-        tax_rates,
-        user_token=user_token
-    )
-    return jsonify(periods)
 
 if __name__ == '__main__':
     # QUAN TRỌNG: debug=True bật Werkzeug interactive debugger - nếu có exception

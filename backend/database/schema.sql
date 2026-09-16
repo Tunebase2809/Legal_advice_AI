@@ -34,11 +34,11 @@ CREATE INDEX idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 
 -- ==============================================================================
--- BẢNG 3: CƠ SỞ TRI THỨC RAG (Lưu luật thuế, văn bản hướng dẫn)
+-- BẢNG 3: CƠ SỞ TRI THỨC RAG (Lưu văn bản pháp luật BHXH, văn bản hướng dẫn)
 -- ==============================================================================
-CREATE TABLE tax_documents (
+CREATE TABLE legal_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    title TEXT,                            -- Tên nghị định, thông tư (Ví dụ: Thông tư 40/2021)
+    title TEXT,                            -- Tên luật, nghị định, thông tư (Ví dụ: Luật BHXH số 41/2024/QH15)
     content TEXT NOT NULL,                 -- Nội dung chi tiết của điều luật (Chunk)
     metadata JSONB,                        -- Thông tin thêm (Chương, mục, điều mấy...)
     issue_date DATE,                       -- Ngày ban hành để ưu tiên luật mới nhất
@@ -47,12 +47,12 @@ CREATE TABLE tax_documents (
 );
 
 -- Tạo Index để tối ưu hóa việc tìm kiếm Vector siêu tốc (HNSW Index)
-CREATE INDEX idx_tax_documents_embedding ON tax_documents USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_legal_documents_embedding ON legal_documents USING hnsw (embedding vector_cosine_ops);
 
 -- ==============================================================================
 -- HÀM TÌM KIẾM RAG (RPC Function cho Frontend/Backend gọi tới)
 -- ==============================================================================
-CREATE OR REPLACE FUNCTION match_tax_documents (
+CREATE OR REPLACE FUNCTION match_legal_documents (
   query_embedding vector(768),
   match_threshold float,
   match_count int
@@ -77,7 +77,7 @@ BEGIN
     t.metadata,
     t.issue_date,
     1 - (t.embedding <=> query_embedding) AS similarity
-  FROM tax_documents t
+  FROM legal_documents t
   -- Khoảng cách Cosine < (1 - threshold) tương đương với similarity > threshold
   WHERE t.embedding <=> query_embedding < 1 - match_threshold
   -- Sắp xếp chuẩn của pgvector để ăn được Index: Khoảng cách càng nhỏ càng xếp trên
@@ -91,12 +91,12 @@ $$;
 -- ==============================================================================
 ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tax_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE legal_documents ENABLE ROW LEVEL SECURITY;
 
--- 1. Policies cho tax_documents (Cơ sở tri thức RAG)
--- Ai cũng có thể đọc (SELECT) luật thuế để tra cứu
-CREATE POLICY "Anyone can read tax documents"
-ON tax_documents FOR SELECT
+-- 1. Policies cho legal_documents (Cơ sở tri thức RAG)
+-- Ai cũng có thể đọc (SELECT) văn bản pháp luật để tra cứu
+CREATE POLICY "Anyone can read legal documents"
+ON legal_documents FOR SELECT
 USING (true);
 -- Lưu ý: Không tạo Policy INSERT/UPDATE cho user thường. Việc thêm luật thuế sẽ do Admin/Backend làm bằng Service Key.
 

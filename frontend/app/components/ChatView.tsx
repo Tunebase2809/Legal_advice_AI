@@ -1,4 +1,4 @@
-import React, { ChangeEvent, FormEvent, useState, useRef, useEffect } from 'react';
+import React, { FormEvent, useState, useRef, useEffect } from 'react';
 import { marked } from 'marked';
 
 type Message = {
@@ -12,33 +12,15 @@ type Message = {
   ragBypassedReason?: string | null;
 };
 
-type TaxData = {
-  is_taxable: boolean;
-  reason?: string;
-  revenue?: number;
-  tax_gtgt?: number;
-  tax_tncn?: number;
-  total_tax?: number;
-  explanation?: string;
-  taxable_revenue_gtgt?: number;
-  taxable_revenue_tncn?: number;
-  taxable_income?: number;
-};
-
 type ChatViewProps = {
   userToken: string | null;
   userEmail: string | null;
-  taxRates?: any;
-  groupedCategories?: any;
-  formatVND?: (amount: number) => string;
-  handleNumberChange?: (e: ChangeEvent<HTMLInputElement>, setVal: (val: string) => void, setDisplayVal: (val: string) => void) => void;
-  setViewMode: (mode: 'dashboard' | 'chat' | 'ledger' | 'tax_schedule') => void;
   handleSignOut: () => void;
 };
 
 const DEFAULT_GREETING: Message = {
   id: "init",
-  text: "Xin chào! Tôi là AI Trợ lý Thuế. Hãy cung cấp doanh thu và ngành nghề, hoặc đính kèm ảnh tờ khai/hóa đơn để tôi tư vấn.",
+  text: "Xin chào! Tôi là AI Trợ lý tra cứu Luật Bảo hiểm xã hội. Hãy đặt câu hỏi về chế độ ốm đau, thai sản, hưu trí, tử tuất, mức đóng/hưởng BHXH..., hoặc đính kèm tài liệu liên quan (hợp đồng lao động, sổ BHXH...) để tôi hỗ trợ.",
   isUser: false,
 };
 
@@ -96,24 +78,11 @@ const SourceDetails = ({ sources, onSourceClick }: { sources: string[], onSource
 export const ChatView: React.FC<ChatViewProps> = ({
   userToken,
   userEmail,
-  taxRates,
-  groupedCategories,
-  formatVND,
-  handleNumberChange,
-  setViewMode,
   handleSignOut
 }) => {
   // Chat-specific state variables
   const [messages, setMessages] = useState<Message[]>([DEFAULT_GREETING]);
   const [inputMessage, setInputMessage] = useState("");
-  const [revenue, setRevenue] = useState("");
-  const [displayRevenue, setDisplayRevenue] = useState("");
-  const [method, setMethod] = useState("doanh_thu");
-  const [expenses, setExpenses] = useState("");
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
-  const [displayExpenses, setDisplayExpenses] = useState("");
-  const [category, setCategory] = useState("hoat_dong_khac");
-  const [taxData, setTaxData] = useState<TaxData | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [chatSessions, setChatSessions] = useState<any[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -124,7 +93,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<{ title: string, content: string } | null>(null);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
-  const [showRevenueWarning, setShowRevenueWarning] = useState(false);
 
   const handleSourceClick = async (title: string) => {
     setIsSourceLoading(true);
@@ -157,86 +125,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
   // Refs inside ChatView
   const chatWindowRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Fallbacks for optional props
-  const [internalTaxRates, setInternalTaxRates] = useState<any>(taxRates || {});
-  const [internalGroupedCategories, setInternalGroupedCategories] = useState<any>(groupedCategories || {});
-
-  // Fetch tax rates internally if not provided
-  useEffect(() => {
-    if (taxRates && Object.keys(taxRates).length > 0) {
-      setInternalTaxRates(taxRates);
-      if (groupedCategories && Object.keys(groupedCategories).length > 0) {
-        setInternalGroupedCategories(groupedCategories);
-      }
-      return;
-    }
-    const fetchRates = async () => {
-      try {
-        const response = await fetch('/api/tax-rates');
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.rates) {
-            setInternalTaxRates(data.rates || {});
-            setInternalGroupedCategories(data.grouped_categories || {});
-          } else {
-            setInternalTaxRates(data || {});
-          }
-        }
-      } catch (err) {
-        console.error("Lỗi tải bảng tỷ lệ thuế trong ChatView:", err);
-      }
-    };
-    fetchRates();
-  }, [taxRates, groupedCategories]);
-
-  // Fallback formatVND
-  const localFormatVND = formatVND || ((amount: number) => {
-    return new Intl.NumberFormat("vi-VN", {
-      style: "currency",
-      currency: "VND",
-    }).format(amount);
-  });
-
-  // Fallback handleNumberChange
-  const localHandleNumberChange = handleNumberChange || ((
-    e: ChangeEvent<HTMLInputElement>,
-    setVal: (val: string) => void,
-    setDisplayVal: (val: string) => void
-  ) => {
-    const input = e.target;
-    const oldVal = input.value;
-    const selectionStart = input.selectionStart || 0;
-
-    let digitsBeforeCursor = 0;
-    for (let i = 0; i < selectionStart; i++) {
-      if (/\d/.test(oldVal[i])) {
-        digitsBeforeCursor++;
-      }
-    }
-
-    const raw = oldVal.replace(/\D/g, "");
-    setVal(raw);
-
-    const formatted = raw.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-    setDisplayVal(formatted);
-
-    setTimeout(() => {
-      let newCursorPos = 0;
-      let digitsSeen = 0;
-      for (let i = 0; i < formatted.length; i++) {
-        if (digitsSeen === digitsBeforeCursor) {
-          break;
-        }
-        if (/\d/.test(formatted[i])) {
-          digitsSeen++;
-        }
-        newCursorPos++;
-      }
-      input.setSelectionRange(newCursorPos, newCursorPos);
-    }, 0);
-  });
-
 
   // Load chat sessions when mounting
   useEffect(() => {
@@ -291,20 +179,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
               sources: m.tax_result_snapshot?.sources || m.sources
             }))
           ]);
-
-          // Bản sao mảng để tránh đảo ngược mảng chính
-          const reverseMsgs = [...msgs].reverse();
-          const lastBotMsg = reverseMsgs.find((m: any) => {
-            if (m.role !== 'assistant' || !m.tax_result_snapshot) return false;
-            const snapshot = m.tax_result_snapshot;
-            return snapshot.tax_snapshot !== undefined || snapshot.is_taxable !== undefined;
-          });
-          if (lastBotMsg) {
-            const snapshot = lastBotMsg.tax_result_snapshot;
-            setTaxData(snapshot.tax_snapshot || snapshot);
-          } else {
-            setTaxData(null);
-          }
         } else {
           setMessages([DEFAULT_GREETING]);
         }
@@ -317,7 +191,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const createNewSession = () => {
     setCurrentSessionId(null);
     setMessages([DEFAULT_GREETING]);
-    setTaxData(null);
   };
 
   // Xóa phiên chat thông qua backend proxy
@@ -352,8 +225,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
     }
   };
 
-  const handleSendMessage = async (text: string, forceRevenue = 0, forceCat = "", forceMethod = "", forceExpenses = 0, isTaxForm = false) => {
-    if (!text.trim() && !selectedFile && !isTaxForm) return;
+  const handleSendMessage = async (text: string) => {
+    if (!text.trim() && !selectedFile) return;
 
     const currentFileName = selectedFile ? selectedFile.name : undefined;
     const currentFileType = selectedFile ? selectedFile.name.split('.').pop()?.toUpperCase() : undefined;
@@ -383,11 +256,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
     const formData = new FormData();
     formData.append("message", text);
-    formData.append("revenue", forceRevenue.toString() || "0");
-    formData.append("category", forceCat || "hoat_dong_khac");
-    formData.append("method", forceMethod || "doanh_thu");
-    formData.append("expenses", forceExpenses.toString() || "0");
-    if (isTaxForm) formData.append("is_tax_form", "true");
     if (selectedFile) formData.append("file", selectedFile);
     if (userToken) formData.append("supabase_token", userToken);
     if (currentSessionId) formData.append("session_id", currentSessionId);
@@ -443,10 +311,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
             ];
           }
         });
-
-        if (data.tax_table) {
-          setTaxData(data.tax_table);
-        }
 
         // Nếu vừa gửi file xong, cập nhật lại danh sách file trong kho lưu trữ
         if (currentFileName) {
@@ -512,101 +376,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
     handleSendMessage(inputMessage);
   };
 
-  const onTaxSubmit = (e: FormEvent) => {
-    e.preventDefault();
-
-    if (!revenue || Number(revenue) <= 0) {
-      alert("Vui lòng nhập doanh thu lớn hơn 0");
-      return;
-    }
-
-    const numericRevenue = Number(revenue);
-    const NET_LEVEL_1 = 3000000000;
-
-    if (numericRevenue > NET_LEVEL_1 && method === 'doanh_thu') {
-      setShowRevenueWarning(true);
-      return;
-    }
-
-    const methodText = method === 'doanh_thu' ? 'Doanh thu' : 'Thu nhập tính thuế';
-
-    let catText = category;
-    if (internalGroupedCategories && Object.keys(internalGroupedCategories).length > 0) {
-      for (const group of Object.values(internalGroupedCategories as Record<string, any[]>)) {
-        const found = group.find((item: any) => item.key === category);
-        if (found) {
-          catText = found.name;
-          break;
-        }
-      }
-    } else if (internalTaxRates && internalTaxRates[category]) {
-      catText = internalTaxRates[category].name || category;
-    }
-
-    const msgParts = [
-      `**📝 Tính thuế cho tôi theo phương pháp "${methodText}":**`,
-      `*   **Doanh thu**: ${localFormatVND(Number(revenue))}`
-    ];
-
-    if (method === 'thu_nhap') {
-      msgParts.push(`*   **Chi phí hợp lý**: ${localFormatVND(Number(expenses))}`);
-    }
-
-    msgParts.push(`*   **Ngành nghề**: ${catText}`);
-    msgParts.push(`👉 *Hãy giải thích tóm tắt bảng tính thuế này.*`);
-
-    const msg = msgParts.join('\n');
-    handleSendMessage(msg, Number(revenue), category, method, Number(expenses), true);
-  };
-
-  const onFastTaxSubmit = async (e: React.FormEvent | React.MouseEvent) => {
-    e.preventDefault();
-
-    const form = (e.target as HTMLElement).closest('form');
-    if (form && !form.checkValidity()) {
-      form.reportValidity();
-      return;
-    }
-
-    if (!revenue || Number(revenue) <= 0) {
-      alert("Vui lòng nhập doanh thu lớn hơn 0");
-      return;
-    }
-
-    const numericRevenue = Number(revenue);
-    const NET_LEVEL_1 = 3000000000;
-
-    if (numericRevenue > NET_LEVEL_1 && method === 'doanh_thu') {
-      setShowRevenueWarning(true);
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("revenue", revenue.toString());
-    formData.append("category", category);
-    formData.append("method", method);
-    formData.append("expenses", expenses.toString() || "0");
-    if (userToken) formData.append("supabase_token", userToken);
-
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
-      const response = await fetch(`${apiUrl}/api/calculate-tax`, {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-      if (data.error) {
-        alert(data.error);
-      } else if (data.tax_table) {
-        setTaxData(data.tax_table);
-      }
-    } catch (error) {
-      console.error("Fast tax calculation failed:", error);
-      alert("Đã có lỗi xảy ra khi tính thuế nhanh.");
-    }
-  };
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
@@ -656,22 +425,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
     <div className="layout" style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
 
       <header className="app-header" style={{ padding: '12px 20px', backgroundColor: '#fff', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', width: '100%', flexShrink: 0 }}>
-        <button onClick={() => setViewMode('dashboard')} className="header-back-btn" title="Quay lại Dashboard">
-          <i className="fa-solid fa-arrow-left"></i> Quay lại Dashboard
-        </button>
         <div className="header-content">
           <h1 style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', fontWeight: 'bold' }}>
-            <i className="fa-solid fa-robot"></i> AI Trợ lý Khai báo Thuế
+            <i className="fa-solid fa-robot"></i> Trợ lý AI tra cứu Luật Bảo hiểm xã hội
           </h1>
         </div>
-        <button
-          className="header-toggle-sidebar-btn"
-          onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
-          title={isRightSidebarOpen ? "Ẩn bảng tính thuế nhanh" : "Hiện bảng tính thuế nhanh"}
-        >
-          <i className="fa-solid fa-calculator"></i>
-          {isRightSidebarOpen ? "Ẩn tính thuế" : "Tính thuế nhanh"}
-        </button>
       </header>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', width: '100%' }}>
@@ -760,8 +518,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           <div className="file-info-container">
                             <div className="file-icon-box">
                               <i className={`fa-solid ${msg.fileType === 'PDF' ? 'fa-file-pdf' :
-                                (['JPG', 'PNG', 'JPEG', 'WEBP'].includes(msg.fileType || '') ? 'fa-file-image' :
-                                  (['XLS', 'XLSX', 'CSV'].includes(msg.fileType || '') ? 'fa-file-excel' : 'fa-file-lines'))
+                                (['JPG', 'PNG', 'JPEG', 'WEBP'].includes(msg.fileType || '') ? 'fa-file-image' : 'fa-file-lines')
                                 }`}></i>
                             </div>
                             <div className="file-details">
@@ -829,9 +586,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     ref={fileInputRef}
                     onChange={handleFileChange}
                     style={{ display: "none" }}
-                    accept=".xlsx,.xls,.csv,.pdf,image/*"
+                    accept=".pdf,image/*"
                   />
-                  <button type="button" className="icon-button" onClick={handleAttachClick} title="Đính kèm Excel/PDF/Ảnh hóa đơn">
+                  <button type="button" className="icon-button" onClick={handleAttachClick} title="Đính kèm PDF/Ảnh tài liệu">
                     <i className="fa-solid fa-paperclip"></i>
                   </button>
 
@@ -839,7 +596,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     type="text"
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder="Nhập câu hỏi hoặc gửi ảnh tờ khai/hóa đơn..."
+                    placeholder="Nhập câu hỏi về bảo hiểm xã hội hoặc gửi ảnh/tài liệu liên quan..."
                     autoComplete="off"
                   />
                   <button type="submit" className="primary-button" disabled={!inputMessage.trim() && !selectedFile}>
@@ -848,162 +605,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 </form>
               </div>
             </div>
-
-            {isRightSidebarOpen && (
-              <div className="side-panel" style={{ transition: 'all 0.3s ease' }}>
-                <h3>
-                  <i className="fa-solid fa-calculator"></i> Tính thuế nhanh
-                </h3>
-                <form onSubmit={onTaxSubmit} className="tax-form">
-                  <div className="form-group">
-                    <label>Phương pháp tính thuế:</label>
-                    <select value={method} onChange={(e) => setMethod(e.target.value)}>
-                      <option value="doanh_thu">Tính theo Doanh thu</option>
-                      <option value="thu_nhap">Tính theo Thu nhập tính thuế (DT - Chi phí)</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>Doanh thu năm (VNĐ):</label>
-                    <input
-                      type="text"
-                      value={displayRevenue}
-                      onChange={(e) => localHandleNumberChange(e, setRevenue, setDisplayRevenue)}
-                      onBlur={() => {
-                        if (revenue) {
-                          setDisplayRevenue(revenue.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + ",00");
-                        }
-                      }}
-                      onFocus={() => {
-                        if (revenue) {
-                          setDisplayRevenue(revenue.replace(/\B(?=(\d{3})+(?!\d))/g, "."));
-                        }
-                      }}
-                      placeholder="VD: 600.000.000,00"
-                      required
-                    />
-                  </div>
-                  {method === "thu_nhap" && (
-                    <div className="form-group">
-                      <label>Chi phí hợp lý (VNĐ):</label>
-                      <input
-                        type="text"
-                        value={displayExpenses}
-                        onChange={(e) => localHandleNumberChange(e, setExpenses, setDisplayExpenses)}
-                        onBlur={() => {
-                          if (expenses) {
-                            setDisplayExpenses(expenses.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + ",00");
-                          }
-                        }}
-                        onFocus={() => {
-                          if (expenses) {
-                            setDisplayExpenses(expenses.replace(/\B(?=(\d{3})+(?!\d))/g, "."));
-                          }
-                        }}
-                        placeholder="VD: 100.000.000,00"
-                        required
-                      />
-                    </div>
-                  )}
-                  <div className="form-group">
-                    <label>Ngành nghề:</label>
-                    <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                      {Object.keys(internalTaxRates).length === 0 ? (
-                        <option value={category}>Đang tải danh sách ngành nghề...</option>
-                      ) : (
-                        Object.entries(internalGroupedCategories as Record<string, any[]>).map(([groupName, items]) => (
-                          <optgroup key={groupName} label={groupName}>
-                            {items.map((item: any) => (
-                              <option key={item.key} value={item.key}>
-                                {item.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))
-                      )}
-                    </select>
-                  </div>
-                  <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
-                    <button type="submit" className="secondary-button" style={{ flex: 1 }}>
-                      <i className="fa-solid fa-robot"></i> AI Tư Vấn
-                    </button>
-                    <button type="button" onClick={onFastTaxSubmit} className="secondary-button" style={{ flex: 1 }}>
-                      <i className="fa-solid fa-bolt"></i> Tính Nhanh
-                    </button>
-                  </div>
-                </form>
-
-                {taxData && (
-                  <div className="card result-card" style={{ display: "block", marginTop: "0.5rem" }}>
-                    <h3>Kết quả Tính Thuế</h3>
-                    <div>
-                      {!taxData.is_taxable ? (
-                        <>
-                          <div className="tax-item">
-                            <span>Trạng thái:</span>
-                            <strong>Được miễn thuế</strong>
-                          </div>
-                          <div className="tax-item">
-                            <p><strong>Lý do: </strong>{taxData.reason}</p>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="tax-item">
-                            <span>Doanh thu:</span>
-                            <strong>{localFormatVND(taxData.revenue || 0)}</strong>
-                          </div>
-                          <div className="tax-item">
-                            <span>DT tính thuế GTGT (toàn bộ):</span>
-                            <strong>{localFormatVND(taxData.taxable_revenue_gtgt || 0)}</strong>
-                          </div>
-                          {taxData.taxable_revenue_tncn !== undefined && (
-                            <div className="tax-item">
-                              <span>DT tính thuế TNCN (vượt 1 tỷ):</span>
-                              <strong>{localFormatVND(taxData.taxable_revenue_tncn || 0)}</strong>
-                            </div>
-                          )}
-                          {taxData.taxable_income !== undefined && (
-                            <div className="tax-item">
-                              <span>Thu nhập tính thuế:</span>
-                              <strong>{localFormatVND(taxData.taxable_income || 0)}</strong>
-                            </div>
-                          )}
-                          <div className="tax-item">
-                            <span>Thuế GTGT:</span>
-                            <span>{localFormatVND(taxData.tax_gtgt || 0)}</span>
-                          </div>
-                          <div className="tax-item">
-                            <span>Thuế TNCN:</span>
-                            <span>{localFormatVND(taxData.tax_tncn || 0)}</span>
-                          </div>
-                          <div className="tax-item tax-total" style={{ alignItems: "center" }}>
-                            <span style={{ fontSize: "1.05rem", fontWeight: "bold" }}>Tổng thuế phải nộp:</span>
-                            <span style={{ fontSize: "1.05rem", fontWeight: "bold", color: "#15803d" }}>{localFormatVND(taxData.total_tax || 0)}</span>
-                          </div>
-                          <div style={{
-                            marginTop: "15px",
-                            padding: "12px",
-                            backgroundColor: "#f0fdf4",
-                            border: "1px solid #bbf7d0",
-                            borderRadius: "8px",
-                            fontSize: "0.85rem",
-                            color: "#166534",
-                            lineHeight: "1.6",
-                            whiteSpace: "pre-wrap"
-                          }}>
-                            <strong><i className="fa-solid fa-circle-info"></i> Giải thích:</strong><br />
-                            {taxData.explanation}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-
-
           </div>
         </main>
       </div>
@@ -1052,7 +653,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   {uploadedFiles.map((file) => (
                     <div key={file.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '10px', border: '1px solid #eee', backgroundColor: '#fafafa' }}>
                       <div style={{ width: '40px', height: '40px', borderRadius: '8px', backgroundColor: '#fff', border: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}>
-                        <i className={`fa-solid ${file.type === 'PDF' ? 'fa-file-pdf' : (['JPG', 'PNG', 'JPEG', 'WEBP'].includes(file.type) ? 'fa-file-image' : (['XLS', 'XLSX', 'CSV'].includes(file.type) ? 'fa-file-excel' : 'fa-file-lines'))}`} style={{ fontSize: '18px' }}></i>
+                        <i className={`fa-solid ${file.type === 'PDF' ? 'fa-file-pdf' : (['JPG', 'PNG', 'JPEG', 'WEBP'].includes(file.type) ? 'fa-file-image' : 'fa-file-lines')}`} style={{ fontSize: '18px' }}></i>
                       </div>
                       <div style={{ flex: 1, overflow: 'hidden' }}>
                         <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
@@ -1135,33 +736,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 <button type="button" className="glass-btn-secondary" onClick={() => setSessionToDelete(null)}>Hủy</button>
                 <button type="button" className="glass-btn-primary delete" onClick={executeDeleteSession}>
                   <i className="fa-solid fa-trash-can"></i> Xóa
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal cảnh báo doanh thu > net_level_1 */}
-      {showRevenueWarning && (
-        <div className="glass-modal-overlay" style={{ zIndex: 1010 }}>
-          <div className="glass-modal-card" style={{ maxWidth: '450px' }}>
-            <div className="glass-modal-header" style={{ borderBottom: '1px solid #fee2e2' }}>
-              <h3 style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}><i className="fa-solid fa-triangle-exclamation"></i> Phương pháp không hợp lệ</h3>
-              <button className="glass-modal-close-btn" onClick={() => setShowRevenueWarning(false)}>
-                <i className="fa-solid fa-xmark"></i>
-              </button>
-            </div>
-            <div className="glass-modal-body" style={{ padding: '20px', color: '#1e293b' }}>
-              <p style={{ margin: '0 0 16px 0', fontSize: '0.95rem', fontWeight: '500' }}>
-                Doanh thu của bạn vượt quá 3 tỷ VNĐ. Theo quy định pháp luật, bạn không được phép chọn "Tính theo Doanh thu". Vui lòng chuyển sang phương pháp "Tính theo Thu nhập tính thuế".
-              </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button type="button" className="glass-btn-primary" onClick={() => {
-                  setMethod('thu_nhap');
-                  setShowRevenueWarning(false);
-                }}>
-                  <i className="fa-solid fa-check"></i> Đổi phương pháp
                 </button>
               </div>
             </div>

@@ -54,21 +54,119 @@ def embed_text(text, title=None):
     return None
 
 def insert_to_supabase(data):
-    """Lưu Vector vào bảng tax_documents"""
+    """Lưu Vector vào bảng legal_documents"""
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    response = requests.post(f"{SUPABASE_URL}/rest/v1/tax_documents", headers=headers, json=data)
+    response = requests.post(f"{SUPABASE_URL}/rest/v1/legal_documents", headers=headers, json=data)
     if response.status_code in [200, 201]:
         print(f"  [+] Đã lưu: {data['title']} - {data['content'][:40]}...")
     else:
         print(f"  [-] Lỗi lưu DB ({response.status_code}): {response.text}")
 
+def backfill_amended_by(chunks):
+    """
+    Chạy SAU KHI các chunk mới đã được insert. Với mỗi chunk có "amendments_to"
+    khác rỗng, tìm (các) chunk CŨ tương ứng trong DB (khớp law_number/law_year/
+    article[/section]) và ghi ngược "amended_by" vào metadata của chúng.
+
+    Đây là bước thay thế cho việc quét/so sánh ilike + ngày tháng ở mỗi câu hỏi
+    của người dùng (search_legal_documents trước đây) - quan hệ sửa đổi giờ được
+    tính MỘT LẦN lúc ingest, runtime chỉ cần đọc "amended_by" có sẵn.
+    """
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    any_backfilled = False
+    for item in chunks:
+        meta = item.get("metadata", {}) or {}
+        amendments = meta.get("amendments_to") or []
+        if not amendments:
+            continue
+
+        amender_ref = {
+            "law_number": meta.get("law_number"),
+            "law_year": meta.get("law_year"),
+            "article": meta.get("article"),
+            "section": meta.get("section") if meta.get("section") not in (None, "", "N/A") else None
+        }
+        if not amender_ref["law_number"] or not amender_ref["law_year"]:
+            continue
+
+        for target in amendments:
+            params = {
+                "select": "id,metadata",
+                "metadata->>law_number": f"eq.{target['law_number']}",
+                "metadata->>law_year": f"eq.{target['law_year']}",
+                "metadata->>article": f"eq.{target['article']}",
+            }
+            if target.get("section"):
+                params["metadata->>section"] = f"eq.{target['section']}"
+
+            try:
+                resp = requests.get(f"{SUPABASE_URL}/rest/v1/legal_documents", headers=headers, params=params, timeout=10)
+            except Exception as e:
+                print(f"  [!] Lỗi truy vấn văn bản cũ để backfill: {e}")
+                continue
+
+            if resp.status_code != 200:
+                continue
+
+            for row in resp.json():
+                row_meta = row.get("metadata") or {}
+                amended_by_list = row_meta.get("amended_by") or []
+                if amender_ref in amended_by_list:
+                    continue
+                amended_by_list.append(amender_ref)
+                row_meta["amended_by"] = amended_by_list
+                try:
+                    patch_resp = requests.patch(
+                        f"{SUPABASE_URL}/rest/v1/legal_documents",
+                        headers=headers,
+                        params={"id": f"eq.{row['id']}"},
+                        json={"metadata": row_meta}
+                    )
+                    if patch_resp.status_code in (200, 204):
+                        any_backfilled = True
+                        target_section_str = f" Khoản {target.get('section')}" if target.get("section") else ""
+                        print(f"  [+] Backfill: {meta.get('law_name')} (Điều {amender_ref['article']}) sửa đổi "
+                              f"Điều {target['article']}{target_section_str} của văn bản {target['law_number']}/{target['law_year']}")
+                except Exception as e:
+                    print(f"  [!] Lỗi ghi amended_by: {e}")
+
+    if any_backfilled:
+        print("✅ Đã cập nhật quan hệ sửa đổi (amended_by) cho các văn bản cũ liên quan.")
+
 # ==========================================
 # 2. AI TRÍCH XUẤT VÀ CHIA ĐOẠN (STRUCTURAL CHUNKING)
 # ==========================================
+
+# Phân loại "dạng quy định" cho từng chunk (xem docs/bhxh_keyphrase_spec.md mục 3).
+# Dùng chung cho mọi văn bản, không riêng miền BHXH.
+PROVISION_TYPE_LEGEND = """
+- P1: Định nghĩa/giải thích từ ngữ
+- P2: Nguyên tắc chung
+- P3: Đối tượng áp dụng
+- P4: Quyền và nghĩa vụ
+- P5: Điều kiện hưởng
+- P6: Mức/tỷ lệ (đóng hoặc hưởng)
+- P7: Trình tự, thủ tục, hồ sơ
+- P8: Hành vi bị nghiêm cấm/xử lý vi phạm
+- P9: Điều khoản chuyển tiếp/hiệu lực thi hành
+"""
+
+AMENDMENTS_TO_INSTRUCTION = """
+6. Phát hiện SỬA ĐỔI/BỔ SUNG văn bản khác: Nếu nội dung chunk này nói rõ nó đang sửa đổi/bổ sung/bãi bỏ một Điều/Khoản CỤ THỂ của một văn bản pháp luật KHÁC (có nêu rõ số hiệu văn bản kiểu "68/2026/NĐ-CP"), hãy điền trường "amendments_to" là một MẢNG liệt kê từng Điều/Khoản bị sửa, mỗi phần tử có dạng:
+   {"law_number": "68", "law_year": 2026, "article": "3", "section": null}
+   (article/section lấy đúng số được nêu trong câu; nếu câu chỉ ghi "tại Điều 3, Điều 4, khoản 1 Điều 8..." thì phải tách thành NHIỀU phần tử riêng biệt, mỗi phần tử 1 Điều/Khoản; nếu sửa cả Điều không chỉ rõ Khoản thì để "section": null).
+   Nếu chunk KHÔNG sửa đổi văn bản nào khác, để "amendments_to": [].
+7. Phân loại "provision_type" cho chunk theo danh sách sau (chọn đúng 1 mã, hoặc null nếu không rõ):
+""" + PROVISION_TYPE_LEGEND
 def extract_metadata_with_gemini(header_text):
     """Trích xuất tên luật, ngày ban hành và loại văn bản từ phần đầu tài liệu"""
     print("⏳ Đang trích xuất thông tin chung của tài liệu (Tên văn bản, ngày ban hành)...")
@@ -138,6 +236,49 @@ def split_text_by_articles(text, max_chars=25000):
         
     return sections
 
+def normalize_amendment_metadata(meta):
+    """
+    Chuẩn hóa metadata liên quan tới quan hệ sửa đổi văn bản của 1 chunk, SAU KHI
+    Gemini đã bóc tách xong (meta["law_name"] đã được làm sạch ở bước trước đó):
+    - Tách "law_number"/"law_year" trực tiếp từ law_name bằng regex (đáng tin cậy
+      hơn để AI tự trích xuất số), dùng để so khớp chính xác khi backfill/tra cứu
+      thay vì phải "ilike" chuỗi con trong content.
+    - Lọc "amendments_to" chỉ giữ lại các mục đủ thông tin (law_number/law_year/
+      article), ép kiểu để so khớp nhất quán khi query PostgREST sau này.
+    - Luôn khởi tạo "amended_by": [] - trường này CHỈ được điền bởi
+      backfill_amended_by() sau khi văn bản mới được insert, không phải do AI
+      bóc tách tự suy ra (lúc bóc tách 1 văn bản, ta không biết văn bản nào
+      trong tương lai sẽ sửa nó).
+    """
+    law_name = meta.get("law_name") or ""
+    match_l = re.search(r'(\d+)/(\d{4})/[\w-]+', law_name)
+    if match_l:
+        meta["law_number"] = match_l.group(1)
+        meta["law_year"] = int(match_l.group(2))
+
+    normalized_targets = []
+    for target in (meta.get("amendments_to") or []):
+        if not isinstance(target, dict):
+            continue
+        law_number = target.get("law_number")
+        law_year = target.get("law_year")
+        article = target.get("article")
+        if not law_number or not law_year or not article:
+            continue
+        try:
+            law_year = int(law_year)
+        except (TypeError, ValueError):
+            continue
+        section = target.get("section")
+        normalized_targets.append({
+            "law_number": str(law_number),
+            "law_year": law_year,
+            "article": str(article),
+            "section": str(section) if section not in (None, "", "N/A") else None
+        })
+    meta["amendments_to"] = normalized_targets
+    meta["amended_by"] = []
+
 def extract_and_chunk_with_gemini(content_parts):
     print("\n⏳ Đang nhờ AI Gemini bóc tách tài liệu theo cấu trúc pháp luật (Điều > Khoản > Điểm)...")
     model_name = "gemini-3.1-flash-lite" 
@@ -182,7 +323,7 @@ def extract_and_chunk_with_gemini(content_parts):
                - "article": số thứ tự của Điều (ví dụ: "4")
                - "section": số thứ tự của Khoản (ví dụ: "1"), nếu không có Khoản thì để null.
                - "type": "{law_type}"
-            
+            {AMENDMENTS_TO_INSTRUCTION}
             YÊU CẦU ĐỊNH DẠNG JSON:
             Trả về duy nhất một mảng JSON có cấu trúc như sau:
             [
@@ -194,7 +335,9 @@ def extract_and_chunk_with_gemini(content_parts):
                     "law_name": "{law_name}",
                     "article": "X",
                     "section": "Y",
-                    "type": "{law_type}"
+                    "type": "{law_type}",
+                    "amendments_to": [],
+                    "provision_type": "P1"
                 }}
               }}
             ]
@@ -238,6 +381,8 @@ def extract_and_chunk_with_gemini(content_parts):
                                 parts = t.split(' - ')
                                 if parts:
                                     item["title"] = ' - '.join([cleaned_l] + parts[1:])
+                    normalize_amendment_metadata(meta)
+                    item["metadata"] = meta
                 all_chunks.extend(chunks_part)
                 print(f"  > Bóc tách thành công {len(chunks_part)} đoạn từ phần {idx+1}.")
             else:
@@ -248,30 +393,32 @@ def extract_and_chunk_with_gemini(content_parts):
 
     else:
         # Fallback cho các file upload (PDF/DOCX) sử dụng File API của Google Cloud AI
-        prompt = """
+        prompt = f"""
         Bạn là một chuyên gia Pháp luật cấp cao. Hãy đọc tài liệu đính kèm và bóc tách nội dung theo cấu trúc pháp luật Việt Nam.
-        
+
         NHIỆM VỤ CỦA BẠN:
         1. Trích xuất chính xác ngày ban hành (issue_date) của văn bản.
         2. Chia nhỏ văn bản thành các đoạn (chunks) dựa trên cấu trúc: Điều > Khoản > Điểm.
         3. Mỗi chunk tương ứng với một đơn vị nội dung hoàn chỉnh (thường là một Khoản hoặc một Điều nếu điều đó ngắn).
         4. Tiêu đề (title) của mỗi chunk phải ghi rõ: [Tên văn bản] - [Điều X] - [Khoản Y].
         5. Nội dung (content) phải giữ nguyên văn, không tóm tắt, bao gồm cả bối cảnh của Điều đó nếu đoạn đó là một Khoản.
-        
+        {AMENDMENTS_TO_INSTRUCTION}
         YÊU CẦU ĐỊNH DẠNG JSON:
         Trả về duy nhất một mảng JSON:
         [
-          {
+          {{
             "title": "Thông tư số: 18/2026/TT-BTC - Điều 4 - Khoản 1",
             "content": "Nội dung đầy đủ của khoản 1 điều 4...",
             "issue_date": "YYYY-MM-DD",
-            "metadata": {
+            "metadata": {{
                 "law_name": "Thông tư số: 18/2026/TT-BTC",
                 "article": "4",
                 "section": "1",
-                "type": "Thông tư"
-            }
-          }
+                "type": "Thông tư",
+                "amendments_to": [],
+                "provision_type": "P1"
+            }}
+          }}
         ]
         LƯU Ý: Tuyệt đối không thêm văn bản ngoài JSON. Nếu không rõ ngày ban hành, để null cho issue_date.
         """
@@ -305,6 +452,8 @@ def extract_and_chunk_with_gemini(content_parts):
                                 parts = t.split(' - ')
                                 if parts:
                                     item["title"] = ' - '.join([cleaned_l] + parts[1:])
+                    normalize_amendment_metadata(meta)
+                    item["metadata"] = meta
                 print(f"✅ Thành công! Đã bóc tách {len(chunks)} đoạn luật.")
                 return chunks
             except Exception as e:
@@ -391,6 +540,11 @@ def ingest_content(content_parts, source_name):
                 "embedding": vector
             }
             insert_to_supabase(row)
+
+    # 3. Ghi ngược quan hệ sửa đổi (amended_by) vào các văn bản cũ liên quan,
+    # dựa trên "amendments_to" mà các chunk vừa insert ở trên khai báo.
+    print(f"\n🔗 Đang đối chiếu quan hệ sửa đổi văn bản...")
+    backfill_amended_by(chunks)
 
 def process_directory(dir_path):
     if not os.path.exists(dir_path):
