@@ -4,3 +4,4 @@ google-genai==1.75.0
 requests==2.33.1
 python-dotenv==1.2.2
 cryptography
+beautifulsoup4==4.15.0

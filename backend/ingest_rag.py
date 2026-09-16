@@ -9,6 +9,7 @@ import time
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 # Đảm bảo stdout hỗ trợ UTF-8 để in tiếng Việt và emoji trên Windows
 if sys.stdout.encoding != 'utf-8':
@@ -279,23 +280,27 @@ def normalize_amendment_metadata(meta):
     meta["amendments_to"] = normalized_targets
     meta["amended_by"] = []
 
-def extract_and_chunk_with_gemini(content_parts):
+def extract_and_chunk_with_gemini(content_parts, metadata_hint=None):
     print("\n⏳ Đang nhờ AI Gemini bóc tách tài liệu theo cấu trúc pháp luật (Điều > Khoản > Điểm)...")
-    model_name = "gemini-3.1-flash-lite" 
-    
+    model_name = "gemini-3.1-flash-lite"
+
     if isinstance(content_parts, str):
-        # 1. Trích xuất metadata trước từ phần đầu tiên của văn bản
-        metadata = extract_metadata_with_gemini(content_parts[:10000])
+        # 1. Trích xuất metadata trước từ phần đầu tiên của văn bản.
+        # Nếu đã có "metadata_hint" (dò được trực tiếp bằng regex từ trang nguồn,
+        # ví dụ div#divContentDoc trên thuvienphapluat.vn) thì dùng luôn, đáng tin
+        # cậy hơn và đỡ tốn 1 lượt gọi AI so với việc để AI tự đoán từ nội dung dài.
+        if metadata_hint and metadata_hint.get("law_name"):
+            print(f"🔹 Dùng thông tin nhận diện trực tiếp từ trang nguồn (bỏ qua bước AI đoán tên văn bản).")
+            metadata = metadata_hint
+        else:
+            metadata = extract_metadata_with_gemini(content_parts[:10000])
         law_name = metadata.get("law_name") or "Tài liệu pháp luật"
-        # Rút gọn law_name nếu quá dài dòng (chỉ giữ lại phần loại văn bản và số hiệu)
-        import re
-        match_l = re.search(r'\d+/\d{4}/[\w-]+', law_name)
-        if match_l:
-            law_name = law_name[:match_l.end()].strip()
         issue_date = metadata.get("issue_date")
         law_type = metadata.get("type") or "Luật"
+        # Chuẩn hóa law_name về đúng dạng "[Loại văn bản] số: [Số hiệu]"
+        law_name = build_clean_law_name(law_name, doc_type_hint=law_type)
         
-        print(f"🔹 Thông tin trích xuất: Luật: {law_name} | Ngày ban hành: {issue_date} | Loại: {law_type}")
+        print(f"🔹 Thông tin trích xuất: {law_name} | Ngày ban hành: {issue_date} | Loại: {law_type}")
         
         # 2. Phân đoạn văn bản nếu nó quá dài
         sections = split_text_by_articles(content_parts)
@@ -371,16 +376,14 @@ def extract_and_chunk_with_gemini(content_parts):
                     meta = item.get("metadata", {})
                     l_name = meta.get("law_name")
                     if l_name:
-                        match_l = re.search(r'\d+/\d{4}/[\w-]+', l_name)
-                        if match_l:
-                            cleaned_l = l_name[:match_l.end()].strip()
-                            meta["law_name"] = cleaned_l
-                            # Update title of chunk
-                            t = item.get("title")
-                            if t:
-                                parts = t.split(' - ')
-                                if parts:
-                                    item["title"] = ' - '.join([cleaned_l] + parts[1:])
+                        cleaned_l = build_clean_law_name(l_name, doc_type_hint=meta.get("type"))
+                        meta["law_name"] = cleaned_l
+                        # Update title of chunk
+                        t = item.get("title")
+                        if t:
+                            parts = t.split(' - ')
+                            if parts:
+                                item["title"] = ' - '.join([cleaned_l] + parts[1:])
                     normalize_amendment_metadata(meta)
                     item["metadata"] = meta
                 all_chunks.extend(chunks_part)
@@ -443,15 +446,13 @@ def extract_and_chunk_with_gemini(content_parts):
                     meta = item.get("metadata", {})
                     l_name = meta.get("law_name")
                     if l_name:
-                        match_l = re.search(r'\d+/\d{4}/[\w-]+', l_name)
-                        if match_l:
-                            cleaned_l = l_name[:match_l.end()].strip()
-                            meta["law_name"] = cleaned_l
-                            t = item.get("title")
-                            if t:
-                                parts = t.split(' - ')
-                                if parts:
-                                    item["title"] = ' - '.join([cleaned_l] + parts[1:])
+                        cleaned_l = build_clean_law_name(l_name, doc_type_hint=meta.get("type"))
+                        meta["law_name"] = cleaned_l
+                        t = item.get("title")
+                        if t:
+                            parts = t.split(' - ')
+                            if parts:
+                                item["title"] = ' - '.join([cleaned_l] + parts[1:])
                     normalize_amendment_metadata(meta)
                     item["metadata"] = meta
                 print(f"✅ Thành công! Đã bóc tách {len(chunks)} đoạn luật.")
@@ -475,6 +476,111 @@ def clean_html(raw_html):
     cleantext = re.sub(cleanr, ' ', raw_html)
     return ' '.join(cleantext.split())
 
+# Các loại văn bản pháp luật thường gặp, xếp cụm dài trước để khớp đúng
+# ("Thông tư liên tịch" phải khớp trước "Thông tư", "Bộ luật" trước "Luật"...).
+DOC_TYPE_KEYWORDS = [
+    "Bộ luật", "Luật", "Pháp lệnh",
+    "Nghị quyết liên tịch", "Nghị quyết",
+    "Nghị định", "Quyết định", "Chỉ thị",
+    "Thông tư liên tịch", "Thông tư", "Công văn",
+]
+
+def extract_doc_header_hint(text):
+    """
+    Dò "Loại văn bản" (Luật/Nghị định/Thông tư...) + "Số hiệu" (vd: 12/2025/TT-BNV)
+    và ngày ban hành bằng regex từ phần đầu văn bản gốc (thường lấy từ
+    div#divContentDoc trên thuvienphapluat.vn). Cách này cho "law_name" chính
+    xác tuyệt đối theo đúng quy chuẩn, đáng tin cậy hơn để AI tự đoán tên văn
+    bản từ một đoạn nội dung dài và nhiều nhiễu.
+    """
+    header = text[:3000]
+
+    so_hieu_match = re.search(r'Số:?\s*(\d+[\w\-./]*/\d{4}/[\w\-]+)', header)
+    so_hieu = so_hieu_match.group(1).strip() if so_hieu_match else None
+
+    # Chọn từ khóa khớp SỚM NHẤT trong văn bản (không theo thứ tự ưu tiên trong
+    # danh sách), vì loại văn bản thật luôn nằm ở dòng tiêu đề đầu tiên - trước
+    # khi tên loại văn bản khác có thể lặp lại trong tên luật được dẫn chiếu
+    # (vd: "THÔNG TƯ ... quy định chi tiết Luật Bảo hiểm xã hội...").
+    doc_type = None
+    doc_type_pos = None
+    for kw in DOC_TYPE_KEYWORDS:
+        m = re.search(r'\b' + re.escape(kw) + r'\b', header, re.IGNORECASE)
+        if m and (doc_type_pos is None or m.start() < doc_type_pos):
+            doc_type = kw
+            doc_type_pos = m.start()
+
+    issue_date = None
+    date_match = re.search(r'ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})', header, re.IGNORECASE)
+    if date_match:
+        d, m, y = date_match.groups()
+        issue_date = f"{y}-{int(m):02d}-{int(d):02d}"
+
+    law_name = f"{doc_type} số: {so_hieu}" if doc_type and so_hieu else None
+
+    return {"law_name": law_name, "type": doc_type, "issue_date": issue_date}
+
+def build_clean_law_name(raw_name, doc_type_hint=None):
+    """
+    Chuẩn hóa "law_name" luôn về đúng dạng "[Loại văn bản] số: [Số hiệu]",
+    bỏ phần tên mô tả mà AI (hoặc nguồn) hay chèn ở giữa - ví dụ AI trả về
+    "Luật Bảo hiểm xã hội số 41/2024/QH15" thì rút gọn thành
+    "Luật số: 41/2024/QH15". Áp dụng thống nhất cho MỌI nguồn nạp dữ liệu
+    (URL, file PDF/DOCX/TXT, thư mục) chứ không chỉ riêng URL, vì trước đây
+    việc rút gọn chỉ cắt bỏ phần THỪA SAU số hiệu chứ không bỏ được tên mô
+    tả nằm xen giữa loại văn bản và số hiệu.
+    """
+    if not raw_name:
+        return raw_name
+
+    so_hieu_match = re.search(r'(\d+[\w\-./]*/\d{4}/[\w\-]+)', raw_name)
+    if not so_hieu_match:
+        return raw_name
+    so_hieu = so_hieu_match.group(1)
+
+    doc_type = None
+    doc_type_pos = None
+    for kw in DOC_TYPE_KEYWORDS:
+        m = re.search(r'\b' + re.escape(kw) + r'\b', raw_name, re.IGNORECASE)
+        if m and (doc_type_pos is None or m.start() < doc_type_pos):
+            doc_type = kw
+            doc_type_pos = m.start()
+    doc_type = doc_type or doc_type_hint
+
+    if not doc_type:
+        return raw_name[:so_hieu_match.end()].strip()
+
+    return f"{doc_type} số: {so_hieu}"
+
+def extract_law_text_from_html(html):
+    """
+    Từ HTML (dù tải trực tiếp qua URL hay đọc từ file .html đã lưu sẵn), lấy
+    đúng nội dung văn bản gốc trong div#divContentDoc (thuvienphapluat.vn),
+    bỏ qua menu/quảng cáo/văn bản liên quan; nếu không có div đó thì lấy
+    toàn bộ text của trang. Trả về (text, metadata_hint) - dùng chung cho cả
+    process_url() và nhánh đọc file .html/.htm trong process_file().
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    content_div = soup.find(id="divContentDoc")
+    if content_div:
+        print("  > Phát hiện div#divContentDoc (thuvienphapluat.vn) - chỉ lấy đúng nội dung văn bản gốc, bỏ qua menu/quảng cáo.")
+        raw_text = content_div.get_text(separator='\n')
+    else:
+        raw_text = soup.get_text(separator='\n')
+
+    # Gộp khoảng trắng thừa trong từng dòng nhưng GIỮ LẠI ranh giới dòng,
+    # vì split_text_by_articles() cần dòng bắt đầu bằng "Điều "/"Chương " để
+    # chia đoạn đúng cấu trúc (trước đây bị gộp thành 1 dòng duy nhất).
+    lines = (' '.join(line.split()) for line in raw_text.splitlines())
+    text = '\n'.join(line for line in lines if line)
+
+    hint = extract_doc_header_hint(text)
+    if hint["law_name"]:
+        date_info = f" (ban hành {hint['issue_date']})" if hint["issue_date"] else ""
+        print(f"  > Nhận diện văn bản: {hint['law_name']}{date_info}")
+
+    return text, hint
+
 def process_url(url):
     print(f"🌐 Đang tải dữ liệu từ URL: {url}")
     try:
@@ -482,45 +588,69 @@ def process_url(url):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         res = requests.get(url, headers=headers, timeout=15)
         res.raise_for_status()
-        text = clean_html(res.text)
-        return text[:50000] # Giới hạn độ dài để xử lý tối ưu
+        res.encoding = res.apparent_encoding or res.encoding
+        return extract_law_text_from_html(res.text)
+    except requests.exceptions.HTTPError as e:
+        if res is not None and res.status_code == 403:
+            print(
+                f"Lỗi tải URL: {e}\n"
+                "  > Trang này đang chặn truy cập tự động (Cloudflare/anti-bot), không thể tải trực tiếp.\n"
+                "  > Cách khắc phục: mở link bằng trình duyệt, bấm Ctrl+S để lưu lại thành file .html, "
+                "rồi nạp file đó qua lựa chọn '2. File văn bản luật' (đã hỗ trợ .html/.htm)."
+            )
+        else:
+            print(f"Lỗi tải URL: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"Lỗi tải URL: {e}")
         sys.exit(1)
 
 def process_file(file_path):
+    """Trả về (content_parts, metadata_hint). metadata_hint chỉ khác None với file .html/.htm."""
     if not os.path.exists(file_path):
         print(f"Lỗi: Không tìm thấy tệp tin [{file_path}]")
         sys.exit(1)
-        
+
     ext = os.path.splitext(file_path)[1].lower()
-    supported_extensions = ['.pdf', '.docx', '.doc', '.txt']
-    
+    supported_extensions = ['.pdf', '.docx', '.doc', '.txt', '.html', '.htm']
+
     if ext not in supported_extensions:
         print(f"Lỗi: Định dạng file '{ext}' không được hỗ trợ. Chỉ nhận: {', '.join(supported_extensions)}")
         sys.exit(1)
-        
+
+    if ext in ('.html', '.htm'):
+        # Dùng cho các trang bị chặn tải tự động (Cloudflare/anti-bot, xem process_url):
+        # người dùng mở link bằng trình duyệt, lưu lại (Ctrl+S) rồi nạp file này.
+        print(f"🌐 Đang đọc tệp HTML đã lưu [{file_path}]...")
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                html = f.read()
+        except Exception as e:
+            print(f"Lỗi đọc tệp HTML: {e}")
+            sys.exit(1)
+        return extract_law_text_from_html(html)
+
     if ext == '.txt':
         print(f"📝 Đang đọc tệp văn bản [{file_path}]...")
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
+                return f.read(), None
         except Exception as e:
             print(f"Lỗi đọc tệp văn bản: {e}")
             sys.exit(1)
-            
+
     print(f"📄 Đang tải tệp tin [{file_path}] lên Google Cloud AI...")
     try:
         uploaded_file = client.files.upload(file=file_path)
         print("Đã tải lên hệ thống Gemini. Sẵn sàng xử lý!")
-        return [uploaded_file]
+        return [uploaded_file], None
     except Exception as e:
         print(f"Lỗi đọc/tải tệp tin: {e}")
         sys.exit(1)
 
-def ingest_content(content_parts, source_name):
+def ingest_content(content_parts, source_name, metadata_hint=None):
     # 1. AI bóc tách
-    chunks = extract_and_chunk_with_gemini(content_parts)
+    chunks = extract_and_chunk_with_gemini(content_parts, metadata_hint=metadata_hint)
     
     if not chunks:
         print(f"❌ Không có dữ liệu nào được bóc tách từ {source_name}. Bỏ qua.")
@@ -556,34 +686,34 @@ def process_directory(dir_path):
         return
         
     print(f"📂 Đang quét thư mục [{dir_path}]...")
-    supported_extensions = ['.pdf', '.docx', '.doc', '.txt']
+    supported_extensions = ['.pdf', '.docx', '.doc', '.txt', '.html', '.htm']
     files_to_ingest = []
-    
+
     for root, dirs, files in os.walk(dir_path):
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             if ext in supported_extensions:
                 files_to_ingest.append(os.path.join(root, f))
-                
+
     if not files_to_ingest:
-        print("Không tìm thấy file nào có định dạng được hỗ trợ (.pdf, .docx, .doc, .txt) trong thư mục.")
+        print("Không tìm thấy file nào có định dạng được hỗ trợ (.pdf, .docx, .doc, .txt, .html, .htm) trong thư mục.")
         return
-        
+
     print(f"Tìm thấy {len(files_to_ingest)} file phù hợp. Bắt đầu nạp dữ liệu...")
     for idx, file_path in enumerate(files_to_ingest):
         print(f"\n[{idx+1}/{len(files_to_ingest)}] Đang xử lý file: {os.path.basename(file_path)}")
-        content_parts = process_file(file_path)
-        ingest_content(content_parts, os.path.basename(file_path))
+        content_parts, metadata_hint = process_file(file_path)
+        ingest_content(content_parts, os.path.basename(file_path), metadata_hint=metadata_hint)
 
 def main():
     print("="*60)
-    print("🚀 AI TAX - HỆ THỐNG NẠP CƠ SỞ TRI THỨC (AUTO-RAG)")
+    print("🚀 LEGAL AI - HỆ THỐNG NẠP CƠ SỞ TRI THỨC (AUTO-RAG)")
     print("="*60)
     
     parser = argparse.ArgumentParser(description="Công cụ nhúng dữ liệu vào Supabase bằng AI")
     parser.add_argument('--url', type=str, help='Link bài viết website')
     parser.add_argument('--pdf', type=str, help='Đường dẫn file PDF (Đã cũ, khuyên dùng --file)')
-    parser.add_argument('--file', type=str, help='Đường dẫn file hoặc thư mục tài liệu (.pdf, .docx, .doc, .txt)')
+    parser.add_argument('--file', type=str, help='Đường dẫn file hoặc thư mục tài liệu (.pdf, .docx, .doc, .txt, .html, .htm)')
     parser.add_argument('--text', type=str, help='Câu text trực tiếp')
     args = parser.parse_args()
 
@@ -595,7 +725,7 @@ def main():
     if not (args.url or args.file or args.pdf or args.text):
         print("Vui lòng chọn nguồn dữ liệu nạp tri thức:")
         print("1. Đường dẫn website")
-        print("2. File văn bản luật (pdf/doc/docx/txt)")
+        print("2. File văn bản luật (.pdf, .docx, .doc, .txt, .html, .htm)")
         print("3. Thư mục chứa văn bản luật")
         
         try:
@@ -607,8 +737,8 @@ def main():
                 if not url:
                     print("Lỗi: Đường dẫn không được để trống.")
                     return
-                content_parts = process_url(url)
-                ingest_content(content_parts, url)
+                content_parts, metadata_hint = process_url(url)
+                ingest_content(content_parts, url, metadata_hint=metadata_hint)
                 
             elif choice == '2':
                 file_path = input("Vui lòng nhập đường dẫn file: ").strip()
@@ -616,9 +746,9 @@ def main():
                 if not file_path:
                     print("Lỗi: Đường dẫn file không được để trống.")
                     return
-                content_parts = process_file(file_path)
-                ingest_content(content_parts, os.path.basename(file_path))
-                
+                content_parts, metadata_hint = process_file(file_path)
+                ingest_content(content_parts, os.path.basename(file_path), metadata_hint=metadata_hint)
+
             elif choice == '3':
                 dir_path = input("Vui lòng nhập đường dẫn thư mục: ").strip()
                 dir_path = dir_path.strip('\'"')  # Hỗ trợ kéo thả thư mục trên Windows
@@ -640,8 +770,8 @@ def main():
 
     # Nếu chạy qua Command Line đối số
     if args.url:
-        content_parts = process_url(args.url)
-        ingest_content(content_parts, args.url)
+        content_parts, metadata_hint = process_url(args.url)
+        ingest_content(content_parts, args.url, metadata_hint=metadata_hint)
     elif args.text:
         ingest_content(args.text, "Văn bản trực tiếp")
     elif args.file or args.pdf:
@@ -653,8 +783,8 @@ def main():
         if os.path.isdir(path_to_process):
             process_directory(path_to_process)
         else:
-            content_parts = process_file(path_to_process)
-            ingest_content(content_parts, os.path.basename(path_to_process))
+            content_parts, metadata_hint = process_file(path_to_process)
+            ingest_content(content_parts, os.path.basename(path_to_process), metadata_hint=metadata_hint)
 
     print("\n🎉 HOÀN TẤT NẠP TÀI LIỆU VÀO CƠ SỞ TRI THỨC!")
 
