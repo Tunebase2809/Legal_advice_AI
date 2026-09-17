@@ -104,21 +104,41 @@ class SupabaseService:
             
         return False
 
-    def search_legal_documents(self, query_vector):
+    # Hybrid re-rank (docs/bhxh_keyphrase_spec.md mục 6.2 bước 4): điểm cộng thêm
+    # cho 1 chunk khi provision_type của nó khớp với "dạng câu hỏi" đã đoán được
+    # (guard_service.classify_provision_types). Giá trị nhỏ so với thang similarity
+    # (0..1) để CHỈ tinh chỉnh thứ tự giữa các chunk có độ liên quan gần nhau,
+    # không để 1 chunk lệch chủ đề nhưng khớp provision_type lấn át chunk tương
+    # đồng ngữ nghĩa cao hơn hẳn.
+    PROVISION_TYPE_BOOST = 0.05
+
+    def search_legal_documents(self, query_vector, query_provision_types=None):
         if not self.url or not self.key or not query_vector:
             return "Thiếu cấu hình Supabase hoặc Vector.", []
-        
+
         headers = {"apikey": self.key, "Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}
         # Yêu cầu RPC trả về cả trường metadata
         response = requests.post(
             f"{self.url}/rest/v1/rpc/match_legal_documents",
-            headers=headers, 
+            headers=headers,
             json={'query_embedding': query_vector, 'match_threshold': 0.3, 'match_count': 50}
         )
-        
+
         if response.status_code == 200:
             results = response.json()
             if results:
+                # (0) Hybrid re-rank: nếu đoán được "dạng câu hỏi" (provision_type),
+                # sắp lại results theo similarity + boost provision_type khớp, TRƯỚC
+                # khi gom nhóm/chọn bài - vì round-robin bên dưới chỉ lấy tối đa 3
+                # đoạn đầu tiên của mỗi văn bản, nên phải ưu tiên đúng ngay từ đây.
+                if query_provision_types:
+                    def rerank_key(r):
+                        meta = r.get('metadata', {}) or {}
+                        similarity = r.get('similarity') or 0
+                        boost = self.PROVISION_TYPE_BOOST if meta.get('provision_type') in query_provision_types else 0
+                        return similarity + boost
+                    results.sort(key=rerank_key, reverse=True)
+
                 # (1). Lọc kết quả với chiến thuật Đa dạng hóa (Round-Robin)
                 from collections import defaultdict
 
@@ -126,13 +146,14 @@ class SupabaseService:
                 for r in results:
                     meta = r.get('metadata', {})
                     law_name = meta.get('law_name', r.get('title', 'Tài liệu').split(' - ')[0])
-                    # Lưu trữ các đoạn vào danh sách riêng của từng văn bản
-                    # (Vì DB đã ORDER BY ASC, các đoạn trong list này đã được sắp xếp từ giống nhất đến ít giống nhất)
+                    # Lưu trữ các đoạn vào danh sách riêng của từng văn bản, đã sắp xếp
+                    # từ giống nhất/ưu tiên nhất đến ít nhất (theo similarity, hoặc theo
+                    # similarity + provision_type boost ở bước (0) nếu có)
                     grouped_results[law_name].append(r)
 
                 filtered_results = []
-                max_total_chunks = 8
-                max_per_doc = 3 # Không lấy quá 3 đoạn/văn bản để tránh loãng
+                max_total_chunks = 12
+                max_per_doc = 3 # Không lấy quá 3 đoạn/văn bản để tránh loãng (ở vòng round-robin đầu tiên)
                 
                 doc_pull_counts = defaultdict(int)
 
@@ -155,11 +176,28 @@ class SupabaseService:
                     if not added_in_this_round:
                         break
 
+                # Vòng 2 - tận dụng nốt slot còn trống: nếu sau vòng round-robin có
+                # giới hạn (max_per_doc=3) mà filtered_results VẪN chưa đầy
+                # max_total_chunks, nghĩa là số văn bản liên quan thực sự ít hơn dự
+                # kiến (VD chỉ có 1 văn bản khớp nhưng có tới 6 Khoản liên quan) -
+                # lúc này bỏ giới hạn max_per_doc, lấy tiếp các đoạn còn lại (đã ưu
+                # tiên sẵn theo similarity + provision_type boost) cho đến khi đầy
+                # hoặc hết dữ liệu, thay vì lãng phí slot dù dữ liệu liên quan vẫn còn.
+                while len(filtered_results) < max_total_chunks:
+                    added_in_this_round = False
+                    for law_name, chunks in list(grouped_results.items()):
+                        if chunks:
+                            filtered_results.append(chunks.pop(0))
+                            added_in_this_round = True
+                        if len(filtered_results) >= max_total_chunks:
+                            break
+                    if not added_in_this_round:
+                        break
+
                 # (2) Đối chiếu quan hệ sửa đổi: "amended_by" đã được ghi sẵn vào
                 # metadata của mỗi chunk lúc ingest (xem ingest_rag.py:backfill_amended_by),
                 # nên ở đây chỉ cần gom các tham chiếu đó lại và fetch đúng nội dung
-                # chunk đang sửa đổi bằng MỘT request duy nhất - không cần quét ilike
-                # hay so sánh ngày tháng ở mỗi câu hỏi như trước đây (_check_for_updates).
+                # chunk đang sửa đổi bằng MỘT request duy nhất.
                 amendment_docs = self._fetch_amending_chunks(filtered_results)
 
                 # Sắp xếp đa tầng: Năm > Ngày ban hành > Số hiệu

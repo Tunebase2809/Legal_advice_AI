@@ -46,7 +46,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
             ? 'Nhập email để nhận liên kết khôi phục mật khẩu'
             : authView === 'reset_password'
               ? 'Nhập mật khẩu mới cho tài khoản của bạn'
-              : 'Hệ thống AI hỗ trợ tra cứu luật'}
+              : 'Trợ lý AI tra cứu Luật Bảo hiểm xã hội'}
         </p>
 
         {authError && (

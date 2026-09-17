@@ -10,6 +10,24 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)
 
+# Ánh xạ mã "dạng quy định" (provision_type, xem docs/bhxh_keyphrase_spec.md mục 3)
+# sang nhãn đầy đủ bằng tiếng Việt. Đây là NGUỒN DUY NHẤT (single source of truth)
+# cho danh sách P1-P9 - ingest_rag.py import trực tiếp từ đây để dựng
+# PROVISION_TYPE_LEGEND (dùng lúc AI gắn nhãn cho từng chunk khi ingest), còn
+# GuardService.describe_provision_types() dùng để hiển thị nhãn đầy đủ cho người
+# dùng (thay vì chỉ hiện mã "P1" khó hiểu) khi đoán "dạng câu hỏi" đang hỏi.
+PROVISION_TYPE_LABELS = {
+    "P1": "Định nghĩa/giải thích từ ngữ",
+    "P2": "Nguyên tắc chung",
+    "P3": "Đối tượng áp dụng",
+    "P4": "Quyền và nghĩa vụ",
+    "P5": "Điều kiện hưởng",
+    "P6": "Mức/tỷ lệ (đóng hoặc hưởng)",
+    "P7": "Trình tự, thủ tục, hồ sơ",
+    "P8": "Hành vi bị nghiêm cấm/xử lý vi phạm",
+    "P9": "Điều khoản chuyển tiếp/hiệu lực thi hành",
+}
+
 
 class GuardService:
     def __init__(self):
@@ -93,6 +111,31 @@ class GuardService:
             "thân nhân", "bảo hiểm y tế", "bảo hiểm thất nghiệp",
             "luật", "nghị định", "thông tư",
         ]
+
+        # 6. Từ khóa nhận diện "dạng quy định" (provision_type P1-P9) mà CÂU HỎI
+        #    đang hỏi - dùng để hybrid re-rank kết quả RAG ở
+        #    supabase_service.search_legal_documents(), ưu tiên chunk vừa gần
+        #    nghĩa (similarity) vừa đúng nhóm khái niệm câu hỏi đang hỏi.
+        #    Đặc tả: docs/bhxh_keyphrase_spec.md mục 3 và mục 6.2 bước 4.
+        #    Một câu hỏi có thể khớp nhiều mã cùng lúc (VD hỏi cả điều kiện lẫn
+        #    mức hưởng) - đây chỉ là gợi ý re-rank "mềm", không dùng để lọc/chặn.
+        self.provision_type_keywords = {
+            "P1": ["là gì", "định nghĩa", "khái niệm", "được hiểu là", "nghĩa là"],
+            "P2": ["nguyên tắc", "chính sách của nhà nước"],
+            "P3": ["đối tượng áp dụng", "đối tượng nào", "ai được", "ai phải",
+                   "áp dụng đối với", "áp dụng cho"],
+            "P4": ["quyền lợi", "nghĩa vụ", "trách nhiệm", "có quyền", "có được"],
+            "P5": ["điều kiện", "đủ điều kiện", "khi nào được hưởng",
+                   "bao nhiêu năm thì được", "bao lâu thì được"],
+            "P6": ["mức đóng", "mức hưởng", "tỷ lệ đóng", "tỷ lệ hưởng",
+                   "bao nhiêu phần trăm", "bao nhiêu tiền", "cách tính", "công thức tính"],
+            "P7": ["thủ tục", "hồ sơ", "trình tự", "quy trình", "nộp ở đâu",
+                   "làm ở đâu", "đóng ở đâu", "cần giấy tờ gì", "thời hạn giải quyết"],
+            "P8": ["bị phạt", "xử phạt", "vi phạm", "nghiêm cấm", "trốn đóng",
+                   "chậm đóng", "xử lý vi phạm"],
+            "P9": ["hiệu lực thi hành", "hiệu lực từ", "trước ngày luật",
+                   "chuyển tiếp", "áp dụng từ ngày"],
+        }
 
         # Danh sách từ tiếng Việt không dấu phổ biến, dùng để nhận diện tiếng Việt
         # gõ không dấu khi kiểm tra ngôn ngữ đầu ra.
@@ -247,12 +290,54 @@ class GuardService:
         # Điểm: mỗi core keyword riêng biệt = 2đ, mỗi context keyword riêng biệt = 1đ
         score = 2 * len(core_hits) + 1 * len(context_hits)
 
-        if core_hits and score >= 3:
+        # Ngưỡng = 2 (không phải 3): chỉ cần khớp ĐÚNG 1 core keyword là đủ để
+        # bật RAG, vì các core keyword vốn đã là tên/thuật ngữ BHXH rõ ràng
+        # (vd "bảo hiểm xã hội", "bhxh"), tự thân đã đủ tin cậy mà không cần
+        # thêm context keyword đi kèm. Ngưỡng 3 trước đây khiến các câu hỏi
+        # ngắn, trực diện kiểu "tôi muốn đóng bảo hiểm xã hội thì đóng ở đâu"
+        # (1 core keyword, 0 context keyword -> điểm 2) bị coi là "không cần
+        # RAG" và AI trả lời bằng kiến thức chung thay vì tài liệu đã nạp.
+        if core_hits and score >= 2:
             return True, ""
         else:
             reason = "Câu hỏi không liên quan đến bảo hiểm xã hội"
             logger.info(f"BỊ CHẶN (needs_rag): {reason}")
             return False, reason
+
+    def classify_provision_types(self, user_input: str) -> set[str]:
+        """
+        Đoán "dạng quy định" (provision_type, mã P1-P9 - xem
+        docs/bhxh_keyphrase_spec.md mục 3) mà câu hỏi đang hỏi, dựa trên các cụm
+        từ dấu hiệu ở self.provision_type_keywords. Có thể trả về nhiều mã cùng
+        lúc (câu hỏi hỏi cả điều kiện lẫn mức hưởng), hoặc set rỗng nếu không
+        nhận diện được dạng nào rõ ràng.
+
+        Dùng để HYBRID RE-RANK "mềm" ở supabase_service.search_legal_documents()
+        (mục 6.2 bước 4) - chỉ cộng thêm điểm ưu tiên cho chunk có provision_type
+        khớp, KHÔNG dùng để lọc/chặn câu hỏi như needs_rag().
+        """
+        if not user_input:
+            return set()
+
+        clean_input = self._normalize(user_input).strip().lower()
+        matched = set()
+        for ptype, phrases in self.provision_type_keywords.items():
+            for phrase in phrases:
+                if phrase in clean_input:
+                    matched.add(ptype)
+                    break
+        return matched
+
+    def describe_provision_types(self, provision_types) -> list[str]:
+        """
+        Chuyển tập mã P1-P9 (kết quả của classify_provision_types) thành danh
+        sách nhãn đầy đủ bằng tiếng Việt (VD "P1" -> "Định nghĩa/giải thích từ
+        ngữ"), sắp theo thứ tự P1->P9, để hiển thị cho người dùng thay vì lộ mã
+        nội bộ khó hiểu.
+        """
+        if not provision_types:
+            return []
+        return [PROVISION_TYPE_LABELS[p] for p in sorted(provision_types) if p in PROVISION_TYPE_LABELS]
 
     # ==========================================
     # GUARD CHO NGỮ CẢNH RAG (RETRIEVED CONTEXT)

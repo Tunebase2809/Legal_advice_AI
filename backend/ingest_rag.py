@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+from services.guard_service import PROVISION_TYPE_LABELS
 
 # Đảm bảo stdout hỗ trợ UTF-8 để in tiếng Việt và emoji trên Windows
 if sys.stdout.encoding != 'utf-8':
@@ -148,18 +149,12 @@ def backfill_amended_by(chunks):
 # ==========================================
 
 # Phân loại "dạng quy định" cho từng chunk (xem docs/bhxh_keyphrase_spec.md mục 3).
-# Dùng chung cho mọi văn bản, không riêng miền BHXH.
-PROVISION_TYPE_LEGEND = """
-- P1: Định nghĩa/giải thích từ ngữ
-- P2: Nguyên tắc chung
-- P3: Đối tượng áp dụng
-- P4: Quyền và nghĩa vụ
-- P5: Điều kiện hưởng
-- P6: Mức/tỷ lệ (đóng hoặc hưởng)
-- P7: Trình tự, thủ tục, hồ sơ
-- P8: Hành vi bị nghiêm cấm/xử lý vi phạm
-- P9: Điều khoản chuyển tiếp/hiệu lực thi hành
-"""
+# Dùng chung cho mọi văn bản, không riêng miền BHXH. Danh sách P1-P9 lấy từ
+# PROVISION_TYPE_LABELS trong services/guard_service.py (nguồn duy nhất), để
+# tránh 2 nơi định nghĩa cùng 1 danh sách rồi lệch nhau khi sửa sau này -
+# guard_service.py dùng chính danh sách đó để đoán "dạng câu hỏi" và hiển thị
+# nhãn đầy đủ cho người dùng lúc tra cứu.
+PROVISION_TYPE_LEGEND = "\n" + "\n".join(f"- {code}: {label}" for code, label in PROVISION_TYPE_LABELS.items()) + "\n"
 
 AMENDMENTS_TO_INSTRUCTION = """
 6. Phát hiện SỬA ĐỔI/BỔ SUNG văn bản khác: Nếu nội dung chunk này nói rõ nó đang sửa đổi/bổ sung/bãi bỏ một Điều/Khoản CỤ THỂ của một văn bản pháp luật KHÁC (có nêu rõ số hiệu văn bản kiểu "68/2026/NĐ-CP"), hãy điền trường "amendments_to" là một MẢNG liệt kê từng Điều/Khoản bị sửa, mỗi phần tử có dạng:

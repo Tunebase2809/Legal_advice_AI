@@ -10,6 +10,7 @@ type Message = {
   fileType?: string;
   sources?: string[];
   ragBypassedReason?: string | null;
+  queryProvisionLabels?: string[];
 };
 
 type ChatViewProps = {
@@ -300,11 +301,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
           if (prev.some((m) => m.id === typingId)) {
             return prev.map((m) => {
               if (m.id === typingId) return { ...m, text: data.text, isTyping: false, sources: data.sources, ragBypassedReason: data.rag_bypassed_reason };
-              if (m.id === userId && data.user_message) return { ...m, text: data.user_message };
+              if (m.id === userId) return { ...m, text: data.user_message || m.text, queryProvisionLabels: data.query_provision_labels };
               return m;
             });
           } else {
-            const next = prev.map((m) => (m.id === userId && data.user_message) ? { ...m, text: data.user_message } : m);
+            const next = prev.map((m) => (m.id === userId) ? { ...m, text: data.user_message || m.text, queryProvisionLabels: data.query_provision_labels } : m);
             return [
               ...next,
               { id: Date.now().toString(), text: data.text, isUser: false, sources: data.sources, ragBypassedReason: data.rag_bypassed_reason },
@@ -564,6 +565,28 @@ export const ChatView: React.FC<ChatViewProps> = ({
                               ) : (
                                 <SourceDetails sources={msg.sources || []} onSourceClick={handleSourceClick} />
                               )}
+                            </div>
+                          ) : null}
+
+                          {msg.isUser && msg.queryProvisionLabels && msg.queryProvisionLabels.length > 0 ? (
+                            <div className="sources-wrapper" style={{
+                              marginTop: '12px',
+                              paddingTop: '12px',
+                              borderTop: '1px solid var(--border-color)',
+                            }}>
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                fontSize: '0.75rem',
+                                fontWeight: '700',
+                                color: 'var(--primary)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.03em',
+                              }}>
+                                <i className="fa-solid fa-magnifying-glass"></i>
+                                Tra cứu: {msg.queryProvisionLabels.join(', ')}
+                              </div>
                             </div>
                           ) : null}
                         </div>

@@ -35,9 +35,8 @@ app.json.sort_keys = False
 # Chỉ tin các header X-Forwarded-* (dùng để lấy IP thật của client) khi app CHẮC CHẮN
 # chạy sau một reverse proxy đáng tin cậy (Nginx/Cloudflare/Load Balancer...).
 # Bật bằng biến môi trường TRUST_PROXY_HEADERS=true khi triển khai thật.
-# KHÔNG tin các header này theo mặc định, vì client có thể tự set giá trị tùy ý để
-# giả mạo IP nguồn và bypass hoàn toàn rate limit (trước đây get_client_ip() đọc
-# thẳng X-Forwarded-For mà không kiểm tra gì).
+# Không tin các header này theo mặc định, vì client có thể tự set giá trị tùy ý để
+# giả mạo IP nguồn và bypass hoàn toàn rate limit.
 if os.getenv("TRUST_PROXY_HEADERS", "false").lower() == "true":
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
@@ -181,7 +180,7 @@ def chat():
             "rag_bypassed_reason": "Từ chối trả lời"
         }), 403
         
-    # 1.1 Kiểm tra sự liên quan của câu hỏi (AI Check 0) trước khi chạy RAG
+    # Kiểm tra sự liên quan của câu hỏi trước khi chạy RAG
     # Bỏ qua từ chối nếu người dùng có tải lên file đi kèm
     is_relevant = True
     if user_message and not file:
@@ -228,47 +227,66 @@ def chat():
     sources = []
     needs_rag_flag = False
     block_reason = None
+    query_provision_labels = []
     if is_relevant:
         needs_rag_flag, block_reason = guard_service.needs_rag(user_message)
         if needs_rag_flag:
             # Chuyển đổi câu hỏi của user thành Vector
             query_vector = gemini_service.embed_text(user_message)
-            legal_context, sources = supabase_service.search_legal_documents(query_vector)
+            # Đoán "dạng câu hỏi" (provision_type P1-P9) để hybrid re-rank kết quả
+            # RAG - ưu tiên chunk vừa gần nghĩa vừa đúng nhóm khái niệm đang hỏi
+            query_provision_types = guard_service.classify_provision_types(user_message)
+            query_provision_labels = guard_service.describe_provision_types(query_provision_types)
+            legal_context, sources = supabase_service.search_legal_documents(
+                query_vector, query_provision_types=query_provision_types
+            )
 
-    # 6. Gemini API - Tư vấn (Đưa file vào phân tích nếu có)
-    ai_response = gemini_service.generate_response(
-        user_message,
-        context=legal_context,
-        file_path=file_path
-    )
-
-    # Nếu lỗi API hoặc từ chối trả lời thì Nguồn tham chiếu = 0
+    # 6. xử lý các trường hợp không có nguồn tham chiếu, hoặc câu hỏi không liên quan
     empty_sources_reason = None
-    if is_relevant and not needs_rag_flag:
-        sources = []
-        empty_sources_reason = "Bỏ qua RAG"
-
-    if ai_response is None:
-        ai_response = "Xin lỗi, tôi không nhận được phản hồi từ mô hình AI."
-    is_error = ai_response.startswith("Lỗi") or "lỗi kết nối" in ai_response
-    is_refusal = "Xin lỗi, tôi không thể trả lời!" in ai_response
-    if is_error or is_refusal:
-        if is_refusal:
-            if not needs_rag_flag and block_reason:
-                ai_response = f"Xin lỗi, tôi không thể trả lời! Lý do: {block_reason}."
-            else:
-                ai_response = "Xin lỗi, tôi không thể trả lời! Lý do: LLM phân loại 'UNRELATED'."
-        sources = []
-        empty_sources_reason = "Lỗi API" if is_error else "Từ chối trả lời"
+    if is_relevant and not file and not sources:
+        if needs_rag_flag:
+            # Đúng chủ đề BHXH (đã qua được needs_rag) nhưng tra Supabase không
+            # ra kết quả nào phù hợp - khác với trường hợp bên dưới (không liên
+            # quan đến BHXH ngay từ đầu), nên dùng thông điệp riêng cho chính xác.
+            ai_response = (
+                "Xin lỗi, tôi không tìm thấy căn cứ pháp lý phù hợp trong cơ sở dữ liệu "
+                "để trả lời chính xác câu hỏi này. Vui lòng đặt câu hỏi cụ thể hơn hoặc "
+                "liên hệ trực tiếp cơ quan Bảo hiểm xã hội để được hỗ trợ."
+            )
+            empty_sources_reason = "Không tìm thấy căn cứ pháp lý trong cơ sở dữ liệu"
+            logger.info("BỊ CHẶN (no_legal_context): Câu hỏi cần tra cứu nhưng không có nguồn phù hợp trong DB.")
+        else:
+            ai_response = f"Xin lỗi, tôi không thể trả lời! Lý do: {block_reason}."
+            empty_sources_reason = block_reason or "Không liên quan đến BHXH"
     else:
-        # 7.1 Guard Service - Kiểm tra phản hồi (Bảo mật & Phòng thủ)
-        is_safe_resp, blocked_reason_resp = guard_service.check_response(ai_response)
-        if not is_safe_resp:
-            ai_response = f"Tin nhắn bị từ chối: {blocked_reason_resp}"
+        # Gemini API - Tư vấn (Đưa file vào phân tích nếu có)
+        ai_response = gemini_service.generate_response(
+            user_message,
+            context=legal_context,
+            file_path=file_path
+        )
+
+        if ai_response is None:
+            ai_response = "Xin lỗi, tôi không nhận được phản hồi từ mô hình AI."
+        is_error = ai_response.startswith("Lỗi") or "lỗi kết nối" in ai_response
+        is_refusal = "Xin lỗi, tôi không thể trả lời!" in ai_response
+        if is_error or is_refusal:
+            if is_refusal:
+                if not needs_rag_flag and block_reason:
+                    ai_response = f"Xin lỗi, tôi không thể trả lời! Lý do: {block_reason}."
+                else:
+                    ai_response = "Xin lỗi, tôi không thể trả lời! Lý do: Câu hỏi này nằm ngoài phạm vi tư vấn Luật Bảo hiểm xã hội mà tôi có thể hỗ trợ."
             sources = []
-            empty_sources_reason = "Chặn phản hồi"
+            empty_sources_reason = "Lỗi API" if is_error else "Từ chối trả lời"
+        else:
+            # 7. Guard Service - Kiểm tra phản hồi (Bảo mật & Phòng thủ)
+            is_safe_resp, blocked_reason_resp = guard_service.check_response(ai_response)
+            if not is_safe_resp:
+                ai_response = f"Tin nhắn bị từ chối: {blocked_reason_resp}"
+                sources = []
+                empty_sources_reason = "Chặn phản hồi"
         
-    # 7. Lưu tin nhắn của AI
+    # 8. Lưu tin nhắn của AI
     if user_token and session_id:
         supabase_service.save_message(session_id, 'assistant', ai_response, user_token, sources=sources)
 
@@ -277,7 +295,8 @@ def chat():
         "session_id": session_id,
         "sources": sources,
         "rag_bypassed_reason": empty_sources_reason,
-        "user_message": user_message
+        "user_message": user_message,
+        "query_provision_labels": query_provision_labels
     }
 
     return jsonify(response)
