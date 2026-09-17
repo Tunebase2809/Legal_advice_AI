@@ -218,11 +218,7 @@ def chat():
         if user_token:
             supabase_service.save_user_file(user_token, file_name, file_type)
 
-    # 4. Lưu tin nhắn của User
-    if user_token and session_id:
-        supabase_service.save_message(session_id, 'user', user_message, user_token, file_name=file_name, file_type=file_type)
-        
-    # 5. RAG - Lấy ngữ cảnh luật BHXH
+    # 4. RAG - Lấy ngữ cảnh luật BHXH
     legal_context = ""
     sources = []
     needs_rag_flag = False
@@ -240,6 +236,16 @@ def chat():
             legal_context, sources = supabase_service.search_legal_documents(
                 query_vector, query_provision_types=query_provision_types
             )
+
+    # 5. Lưu tin nhắn của User - đặt SAU bước RAG để có sẵn query_provision_labels,
+    # lưu kèm vào result_snapshot (xem save_message) để tải lại lịch sử chat vẫn
+    # hiển thị đúng badge "Tra cứu: ..." thay vì mất khi rời trang.
+    if user_token and session_id:
+        supabase_service.save_message(
+            session_id, 'user', user_message, user_token,
+            file_name=file_name, file_type=file_type,
+            query_provision_labels=query_provision_labels
+        )
 
     # 6. xử lý các trường hợp không có nguồn tham chiếu, hoặc câu hỏi không liên quan
     empty_sources_reason = None

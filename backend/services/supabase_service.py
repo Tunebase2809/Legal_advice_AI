@@ -52,7 +52,7 @@ class SupabaseService:
             
         return None
 
-    def save_message(self, session_id, role, content, user_token, file_name=None, file_type=None, sources=None):
+    def save_message(self, session_id, role, content, user_token, file_name=None, file_type=None, sources=None, query_provision_labels=None):
         if not self.url or not self.key or not session_id or not user_token:
             return False
 
@@ -73,10 +73,17 @@ class SupabaseService:
         if file_type:
             data["file_type"] = file_type
 
-        # tax_result_snapshot là tên cột JSONB có sẵn trong DB (xem database/schema.sql),
-        # tái sử dụng để lưu "sources" (nguồn tham chiếu luật) cho mỗi tin nhắn assistant.
+        # result_snapshot là tên cột JSONB có sẵn trong DB (xem database/schema.sql),
+        # dùng chung để lưu dữ liệu "đính kèm" theo từng tin nhắn:
+        # - "sources" (nguồn tham chiếu luật) cho tin nhắn assistant.
+        # - "query_provision_labels" (nhãn "Tra cứu: ...") cho tin nhắn user.
+        snapshot = {}
         if sources:
-            data["tax_result_snapshot"] = {"sources": sources}
+            snapshot["sources"] = sources
+        if query_provision_labels:
+            snapshot["query_provision_labels"] = query_provision_labels
+        if snapshot:
+            data["result_snapshot"] = snapshot
             
         try:
             response = requests.post(

@@ -25,7 +25,7 @@ CREATE TABLE chat_messages (
     content TEXT NOT NULL,                                              -- Nội dung chat
     file_name TEXT,                                                     -- Tên tệp tin (để hiển thị icon)
     file_type TEXT,                                                     -- Loại tệp tin (PDF, XLSX, ...)
-    tax_result_snapshot JSONB,                                          -- Lưu lại bảng tính thuế (nếu có) để khi mở lại chat vẫn còn số liệu
+    result_snapshot JSONB,                                              -- Lưu lại bảng tính thuế (nếu có) để khi mở lại chat vẫn còn số liệu
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 

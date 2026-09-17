@@ -177,7 +177,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
               isUser: m.role === 'user',
               fileName: m.file_name,
               fileType: m.file_type,
-              sources: m.tax_result_snapshot?.sources || m.sources
+              sources: m.result_snapshot?.sources || m.sources,
+              queryProvisionLabels: m.result_snapshot?.query_provision_labels
             }))
           ]);
         } else {
