@@ -1,16 +1,22 @@
 # Đặc tả Keyphrase — Hệ thống tra cứu kiến thức pháp luật Bảo hiểm xã hội (BHXH)
 
-> Trạng thái: **DRAFT** — khung đặc tả dựng trước khi có văn bản luật chính thức. Mọi số liệu cụ thể (tỷ lệ %, số năm, độ tuổi...) xuất hiện trong tài liệu này cần được **đối chiếu lại với văn bản luật thật** (sẽ nạp vào `documents/`) trước khi dùng làm căn cứ trả lời cho người dùng cuối. Các mục đánh dấu `[cần đối chiếu]` là mức độ tin cậy thấp nhất, chỉ mang tính tham khảo cấu trúc.
-
 ## 1. Lĩnh vực và văn bản pháp luật được chọn
 
 - **Lĩnh vực:** Bảo hiểm xã hội (BHXH)
-- **Văn bản gốc dự kiến:** Luật Bảo hiểm xã hội số 41/2024/QH15 (hiệu lực 01/07/2025, thay thế Luật BHXH 2014) — sẽ thay bằng văn bản chính thức do người dùng cung cấp.
+Cả 6 văn bản dưới đây **đã ingest xong** vào bảng `legal_documents` trên Supabase (đã nhúng vector, sẵn sàng để `search_legal_documents` truy xuất):
+
+1. Luật Bảo hiểm xã hội số 41/2024/QH15 (hiệu lực 01/07/2025, thay thế Luật BHXH 2014).
+2. Nghị định số 157/2025/NĐ-CP — BHXH bắt buộc đối với quân nhân, công an nhân dân, dân quân thường trực, người làm công tác cơ yếu hưởng lương như quân nhân.
+3. Nghị định số 158/2025/NĐ-CP — hướng dẫn chi tiết BHXH bắt buộc.
+4. Nghị định số 159/2025/NĐ-CP — hướng dẫn chi tiết BHXH tự nguyện.
+5. Nghị định số 176/2025/NĐ-CP — trợ cấp hưu trí xã hội.
+6. Nghị định số 274/2025/NĐ-CP — chậm đóng, trốn đóng BHXH bắt buộc/bảo hiểm thất nghiệp; khiếu nại, tố cáo về BHXH.
+
 - **Đối tượng người dùng mục tiêu:** người lao động, người sử dụng lao động, người tham gia BHXH tự nguyện, thân nhân người tham gia.
 
-## 2. Đặc tả thành phần khái niệm (Concept taxonomy)
+## 2. Thành phần khái niệm (Concept taxonomy) — tài liệu phân tích
 
-Mỗi keyphrase được gán vào một trong các nhóm khái niệm sau. Nhóm này dùng để (a) sinh ra danh sách keyphrase có hệ thống, và (b) làm nhãn metadata khi ingest văn bản (gắn cùng `article`/`section` hiện có trong `ingest_rag.py`).
+Nhóm khái niệm A–H dưới đây là khung phân tích dùng để thiết kế bộ keyphrase ở mục 4. Mỗi keyphrase ở mục 4 được liệt kê xuất phát từ 1 trong các nhóm khái niệm sau:
 
 | Mã nhóm | Tên nhóm | Mô tả | Ví dụ khái niệm |
 |---|---|---|---|
@@ -23,9 +29,9 @@ Mỗi keyphrase được gán vào một trong các nhóm khái niệm sau. Nhó
 | G | Thủ tục & hồ sơ | Quy trình hành chính | hồ sơ hưởng chế độ, thời hạn giải quyết, sổ BHXH, mã số BHXH |
 | H | Quản lý & xử lý vi phạm | Giám sát, chế tài | quỹ BHXH, thanh tra, xử phạt vi phạm hành chính, khiếu nại, tố cáo |
 
-## 3. Đặc tả dạng quy định (Provision-type taxonomy)
+## 3. Dạng quy định (Provision-type taxonomy) — đã triển khai đầy đủ trong code
 
-Đây là "dạng luật" — vai trò tu từ/pháp lý của một đoạn quy định, dùng để phân loại từng chunk (Điều/Khoản) khi ingest, tương tự cách `ingest_rag.py` hiện đang gắn `article`/`section`. Có thể mở rộng schema chunk hiện tại thêm trường `provision_type`.
+"Dạng quy định" là vai trò tu từ/pháp lý của một đoạn luật (Điều/Khoản). Khác với mục 2, taxonomy này **có chạy thật** trong hệ thống, ở cả 2 chiều: (a) gắn nhãn cho từng đoạn luật lúc ingest, và (b) đoán "dạng câu hỏi" đang hỏi để ưu tiên kết quả tìm kiếm phù hợp hơn.
 
 | Mã | Dạng quy định | Dấu hiệu nhận biết trong văn bản |
 |---|---|---|
@@ -39,52 +45,42 @@ Mỗi keyphrase được gán vào một trong các nhóm khái niệm sau. Nhó
 | P8 | Hành vi bị nghiêm cấm / xử lý vi phạm | "nghiêm cấm", "xử lý vi phạm", "bị xử phạt" |
 | P9 | Điều khoản chuyển tiếp / hiệu lực thi hành | "kể từ ngày Luật này có hiệu lực", "đối với người đã tham gia trước ngày..." |
 
-## 4. Bộ keyphrase (mirror cấu trúc `core_keywords` / `context_keywords` trong `guard_service.py`)
+**Nơi triển khai trong code (nguồn duy nhất — single source of truth):**
+- `PROVISION_TYPE_LABELS` trong [guard_service.py](../backend/services/guard_service.py) — dict `{mã: nhãn tiếng Việt}` là nơi định nghĩa DUY NHẤT danh sách P1–P9; mọi nơi khác import từ đây, không định nghĩa lại.
+- [ingest_rag.py](../backend/ingest_rag.py) import `PROVISION_TYPE_LABELS` để dựng `PROVISION_TYPE_LEGEND` — chèn vào prompt bóc tách, để AI gắn `provision_type` cho từng chunk lúc ingest (xem mục 6.3).
+- `GuardService.classify_provision_types(user_input)` — đoán câu hỏi đang thuộc (các) mã P1–P9 nào, dựa trên `self.provision_type_keywords` (cụm từ dấu hiệu cho từng mã, VD "điều kiện", "đủ điều kiện" → P5). Có thể trả về nhiều mã cùng lúc.
+- `GuardService.describe_provision_types(...)` — chuyển tập mã thành nhãn tiếng Việt đầy đủ để hiển thị cho người dùng (không lộ mã nội bộ "P5").
+- Dùng ở `app.py` (route `/api/chat`) → truyền vào `supabase_service.search_legal_documents(..., query_provision_types=...)` để hybrid re-rank (mục 6.2 bước 4), và trả `query_provision_labels` trong JSON response → hiển thị ở frontend (`ChatView.tsx`, trường `queryProvisionLabels`).
 
-Giữ nguyên cơ chế chấm điểm hiện có: mỗi `core_keyword` khớp = 2 điểm, mỗi `context_keyword` khớp = 1 điểm, ngưỡng kích hoạt RAG = tổng điểm ≥ 2 và có ít nhất 1 core keyword (tức là chỉ cần khớp đúng 1 core keyword là đủ, không bắt buộc phải có thêm context keyword đi kèm - ngưỡng cũ là ≥ 3 khiến các câu hỏi ngắn, trực diện như "đóng bảo hiểm xã hội ở đâu" bị bỏ qua RAG). Danh sách đầy đủ nằm trong code tại [guard_service.py](../backend/services/guard_service.py); tóm tắt theo nhóm khái niệm (mục 2) như sau:
+## 4. Bộ keyphrase (Certainty Factor — đã triển khai trong `guard_service.py`)
 
-**Core keywords (tín hiệu trực tiếp, mạnh):**
+Mỗi keyword được gán 1 **Hệ số tin cậy (Certainty Factor - CF)** trong khoảng [0, 1] thay vì cộng điểm tùy ý: core keyword CF 0.7–0.85 (thuật ngữ BHXH đặc thù, hiếm khi lẫn miền khác), context keyword CF 0.15–0.3 (tín hiệu bổ trợ, dễ lẫn miền khác như "luật", "công ty"). Các CF của keyword khớp được kết hợp bằng công thức CF chuẩn `CF_kết_hợp = CF1 + CF2×(1-CF1)` (áp dụng tuần tự, tương đương `1 - Π(1-CFi)`) thành 1 giá trị duy nhất, thay vì cộng dồn số nguyên.
+
+**Ngưỡng kích hoạt RAG:** `CF_kết_hợp ≥ 0.5` **VÀ** có ít nhất 1 core keyword khớp — core keyword là điều kiện CẦN (CF thấp nhất của nó, 0.7, đã tự vượt ngưỡng 0.5), CF là điều kiện ĐỦ (tránh việc vài context keyword mơ hồ cộng dồn vượt 0.5 dù câu hỏi không hề thuộc miền BHXH, VD "công ty" + "luật").
+
+**Cài đặt:** [guard_service.py](../backend/services/guard_service.py) — `self.core_keywords`/`self.context_keywords` (dict `{từ khóa: CF}`), `_combine_two_cf`, `_combine_cf_list`, `needs_rag()`.
+
+**Core keywords (tín hiệu trực tiếp, mạnh — CF 0.7–0.85):**
 bảo hiểm xã hội, bhxh, bhxh bắt buộc, bhxh tự nguyện, sổ bảo hiểm xã hội, mã số bhxh, chế độ ốm đau, chế độ thai sản, chế độ hưu trí, chế độ tử tuất, lương hưu, trợ cấp một lần, trợ cấp hưu trí xã hội, bảo hiểm hưu trí bổ sung, mức đóng bhxh, tỷ lệ đóng bhxh, tiền lương đóng bhxh, thời gian đóng bhxh, rút bhxh một lần, hưởng bhxh một lần, tuổi nghỉ hưu, suy giảm khả năng lao động, trợ cấp tuất, mai táng phí, tham gia bhxh, cơ quan bảo hiểm xã hội, quỹ bảo hiểm xã hội.
 
-**Context keywords (tín hiệu bổ trợ, cần kết hợp):**
-người lao động, người sử dụng lao động, hợp đồng lao động, tiền lương, nghỉ việc, nghỉ thai sản, sinh con, nuôi con nuôi, thai sản, tai nạn lao động, bệnh nghề nghiệp, nghỉ hưu, về hưu, trốn đóng, chậm đóng, nợ bảo hiểm, truy thu, hồ sơ hưởng, thủ tục hưởng, giải quyết chế độ, khiếu nại, tố cáo, xử phạt, thanh tra, doanh nghiệp, công ty, viên chức, công chức, lao động tự do, thân nhân, bảo hiểm y tế (liên quan), bảo hiểm thất nghiệp (liên quan), luật, nghị định, thông tư.
+**Context keywords (tín hiệu bổ trợ, cần kết hợp — CF 0.15–0.35):**
+người lao động, người sử dụng lao động, hợp đồng lao động, tiền lương, nghỉ việc, nghỉ thai sản, sinh con, nuôi con nuôi, thai sản, tai nạn lao động, bệnh nghề nghiệp, nghỉ hưu, về hưu, trốn đóng, chậm đóng, nợ bảo hiểm, truy thu, hồ sơ hưởng, thủ tục hưởng, giải quyết chế độ, khiếu nại, tố cáo, xử phạt, thanh tra, doanh nghiệp, công ty, viên chức, công chức, lao động tự do, thân nhân, bảo hiểm y tế, bảo hiểm thất nghiệp, luật, nghị định, thông tư.
 
-## 5. Bộ câu hỏi – trả lời mẫu (seed Q&A set)
+**Từ khóa dấu hiệu cho `provision_type` (mục 3), dùng bởi `classify_provision_types()`:** mỗi mã P1–P9 có 1 danh sách cụm từ riêng trong `self.provision_type_keywords` (VD P5 "Điều kiện hưởng" ↔ "điều kiện", "đủ điều kiện", "khi nào được hưởng"...) — xem đầy đủ trong code, không lặp lại ở đây để tránh 2 nguồn dữ liệu lệch nhau.
 
-Bộ này phục vụ (a) test guard/routing layer, (b) test độ chính xác retrieval, (c) làm few-shot/eval set. **Các câu trả lời có số liệu cụ thể đều cần đối chiếu lại văn bản gốc trước khi dùng thật** — đánh dấu `[cần đối chiếu]`.
 
-| # | Câu hỏi | Nhóm khái niệm | Trả lời mẫu (khung, cần đối chiếu số liệu) |
-|---|---|---|---|
-| 1 | BHXH bắt buộc và BHXH tự nguyện khác nhau như thế nào? | B | BHXH bắt buộc do Nhà nước tổ chức, người lao động và người sử dụng lao động bắt buộc tham gia theo quy định; BHXH tự nguyện do người dân tự nguyện tham gia, tự chọn mức đóng và phương thức đóng phù hợp thu nhập. `[cần đối chiếu]` phạm vi chế độ cụ thể của từng loại. |
-| 2 | Đóng BHXH bao nhiêu năm thì được hưởng lương hưu? | E | Cần đủ số năm đóng BHXH tối thiểu theo quy định hiện hành và đủ tuổi nghỉ hưu. `[cần đối chiếu]` con số năm tối thiểu chính xác trong văn bản đang dùng. |
-| 3 | Điều kiện để rút BHXH một lần là gì? | E | Áp dụng cho một số trường hợp cụ thể (ra nước ngoài định cư, mắc bệnh hiểm nghèo, chưa đủ điều kiện hưởng lương hưu sau thời gian nghỉ việc theo quy định...). `[cần đối chiếu]` danh sách đầy đủ và mốc thời gian áp dụng theo văn bản thật. |
-| 4 | Mức hưởng chế độ thai sản được tính như thế nào? | F | Tính trên cơ sở mức bình quân tiền lương tháng đóng BHXH của một số tháng liền kề trước khi nghỉ, nhân với số tháng nghỉ theo chế độ. `[cần đối chiếu]` công thức và số tháng cụ thể. |
-| 5 | Người sử dụng lao động phải đóng BHXH cho người lao động theo tỷ lệ bao nhiêu? | D | Gồm phần đóng vào các quỹ (hưu trí – tử tuất, ốm đau – thai sản...) theo tỷ lệ % trên tiền lương tháng đóng BHXH. `[cần đối chiếu]` tỷ lệ chính xác theo văn bản/nghị định hướng dẫn hiện hành. |
-| 6 | Hồ sơ hưởng chế độ tử tuất gồm những gì? | G | Thường gồm giấy chứng tử/giấy báo tử, tờ khai của thân nhân, sổ BHXH... `[cần đối chiếu]` danh mục hồ sơ đầy đủ theo văn bản. |
-| 7 | Chậm đóng BHXH bị xử lý như thế nào? | D, H | Bị tính lãi chậm đóng và có thể bị xử phạt vi phạm hành chính; cơ quan BHXH có quyền yêu cầu truy thu. `[cần đối chiếu]` mức lãi suất/mức phạt cụ thể. |
-| 8 | Ai được hưởng trợ cấp hưu trí xã hội? | B, E | Người cao tuổi không có lương hưu hoặc trợ cấp BHXH hằng tháng, đáp ứng điều kiện về độ tuổi theo quy định. `[cần đối chiếu]` mốc tuổi chính xác. |
-| 9 | Người lao động nghỉ việc chưa đủ điều kiện hưởng lương hưu thì có được bảo lưu thời gian đóng BHXH không? | E | Có, thời gian đã đóng được bảo lưu để cộng dồn cho lần tham gia sau hoặc tính hưởng chế độ khi đủ điều kiện. |
-| 10 | Sổ BHXH dùng để làm gì và ai cấp? | G | Ghi nhận quá trình tham gia và đóng BHXH của người lao động, làm căn cứ giải quyết các chế độ; do cơ quan bảo hiểm xã hội cấp. |
+## 5. Thiết kế giải pháp tra cứu - Tra cứu theo ngữ nghĩa đơn giản (simple semantic search)
 
-> Khi có văn bản luật thật, nên mở rộng bộ này lên 30–50 cặp câu hỏi – trả lời, rải đều theo 8 nhóm khái niệm (mục 2) và ít nhất 1 câu/nhóm cho mỗi dạng quy định P1–P9 (mục 3), để bộ eval bao phủ cả tra cứu quy định và tra cứu ngữ nghĩa.
+Toàn bộ luồng nằm trong `app.py` (route `/api/chat`) gọi `guard_service` rồi `supabase_service.search_legal_documents()`:
 
-## 6. Thiết kế giải pháp tra cứu
+- **Bước 1 — Guard/Routing (Certainty Factor):** `guard_service.needs_rag()` quyết định câu hỏi có thuộc miền BHXH và có cần kích hoạt RAG không, dựa trên mô hình CF ở mục 4 (không còn cộng điểm tùy ý).
+- **Bước 2 — Vector retrieval:** `gemini_service.embed_text()` (Gemini Embedding, 768 chiều) nhúng câu hỏi, gọi RPC `match_legal_documents` trên Supabase pgvector để tìm chunk gần nghĩa nhất qua cosine similarity (`match_threshold=0.3`), không yêu cầu khớp chính xác từ khóa.
+- **Bước 3 — Hybrid re-rank theo `provision_type`:** `guard_service.classify_provision_types()` đoán "dạng câu hỏi" (P1-P9). Kết quả truyền vào `search_legal_documents(query_vector, query_provision_types=...)`, cộng thêm `PROVISION_TYPE_BOOST = 0.05` (nhỏ so với thang similarity 0..1) vào điểm của chunk có `provision_type` khớp, sắp lại toàn bộ `results` theo điểm kết hợp này **trước** bước round-robin — vì round-robin chỉ lấy tối đa vài đoạn đầu mỗi văn bản nên phải ưu tiên đúng thứ tự từ trước đó.
+- **Bước 4 — Đa dạng hóa kết quả (round-robin, 2 vòng):** vòng 1 lấy xoay vòng tối đa `max_per_doc=3` đoạn/văn bản cho tới khi đủ `max_total_chunks=12` hoặc hết dữ liệu; vòng 2 (nếu vòng 1 chưa lấp đầy 12, tức số văn bản liên quan thực sự ít) bỏ giới hạn `max_per_doc`, lấy tiếp các đoạn còn lại đã ưu tiên sẵn — tránh lãng phí slot khi chỉ có ít văn bản nhưng liên quan sâu (nhiều Khoản).
+- **Bước 5 — Đối chiếu quan hệ sửa đổi (đa tầng bằng BFS):** mỗi chunk khi ingest được gắn `amendments_to` (văn bản này sửa Điều/Khoản nào của văn bản khác — AI trích trực tiếp từ câu chữ, VD "sửa đổi Điều 3... Nghị định số 68/2026/NĐ-CP"); `ingest_rag.py:backfill_amended_by()` ghi ngược quan hệ đó thành `amended_by` vào đúng chunk cũ bị sửa (PATCH 1 lần lúc ingest, không phải mỗi câu hỏi). Khi trả lời, `supabase_service._fetch_amending_chunks()` duyệt **BFS nhiều tầng** theo `amended_by`: nếu văn bản B sửa A, rồi văn bản C lại sửa B, hệ thống tự lần sang C ở tầng kế tiếp (không dừng ở 1 tầng), mỗi tầng chỉ tốn đúng 1 request HTTP (gộp bằng `or=(and(...),...)`), giới hạn an toàn `max_hops=5`/`max_total=30`.
+- **Bước 6 — Sinh câu trả lời có căn cứ:** đưa các chunk truy xuất được (kèm cảnh báo "đã bị sửa đổi bởi..." nếu có `amended_by`) vào context, LLM bắt buộc trích dẫn Điều/Khoản, không suy diễn ngoài context (nguyên tắc 2.1–2.4 trong `gemini_service.py`, hệ thống chỉ dẫn "chuyên gia tư vấn BHXH").
 
-### 6.1 Bài toán 1 — Tra cứu quy định (structured/regulation lookup)
-
-- **Đầu vào:** câu hỏi có chỉ rõ hoặc suy ra được thực thể pháp lý cụ thể (VD: "Điều 5 khoản 2 Luật BHXH", "chế độ thai sản").
-- **Cơ chế:** query có điều kiện trên metadata đã gắn khi ingest (`law_name`, `law_number`, `law_year`, `article`, `section`, `provision_type` — mục 3), lưu trong bảng `legal_documents` (`database/schema.sql`), cột `metadata` kiểu JSONB nên không cần đổi schema DB khi thêm trường mới.
-- **Kết quả:** trả về đúng chunk (Điều/Khoản) tương ứng, kèm trích dẫn nguồn (đã có sẵn cơ chế này trong `gemini_service.py`, phần system rule 2.1).
-
-### 6.2 Bài toán 2 — Tra cứu theo ngữ nghĩa đơn giản (simple semantic search)
-
-- **Bước 1 — Guard/Routing (keyphrase scoring):** dùng bộ keyphrase ở mục 4 để quyết định câu hỏi có thuộc miền BHXH hay không và có cần kích hoạt RAG không (`guard_service.needs_rag`).
-- **Bước 2 — Vector retrieval:** dùng pipeline nhúng đã có (`embed_text` — Gemini Embedding, 768 chiều, lưu Supabase pgvector, hàm RPC `match_legal_documents`) để tìm các chunk gần nghĩa nhất với câu hỏi qua cosine similarity, không yêu cầu khớp chính xác từ khóa.
-- **Bước 3 — Đối chiếu quan hệ sửa đổi (đã triển khai):** mỗi chunk khi ingest được gắn `amendments_to` (văn bản này sửa Điều/Khoản nào của văn bản khác — AI trích trực tiếp từ câu chữ, VD "sửa đổi Điều 3... Nghị định số 68/2026/NĐ-CP"), sau đó `ingest_rag.py:backfill_amended_by()` ghi ngược quan hệ đó thành `amended_by` vào đúng chunk cũ bị sửa (PATCH 1 lần lúc ingest). Khi trả lời, `supabase_service.search_legal_documents()` chỉ đọc thẳng `amended_by` có sẵn trong metadata và fetch nội dung sửa đổi bằng 1 request duy nhất (`_fetch_amending_chunks`) — không còn phải "ilike" toàn bộ nội dung + so sánh ngày tháng ở mỗi câu hỏi như thiết kế ban đầu.
-- **Bước 4 — Hybrid re-rank theo `provision_type` (đã triển khai):** `guard_service.classify_provision_types()` đoán "dạng câu hỏi" (P1-P9) dựa trên cụm từ dấu hiệu trong câu hỏi (VD "điều kiện", "đủ điều kiện" → P5). Kết quả này được truyền vào `supabase_service.search_legal_documents(query_vector, query_provision_types=...)`, cộng thêm `PROVISION_TYPE_BOOST` (0.05, nhỏ so với thang similarity 0..1) vào điểm similarity của các chunk có `provision_type` khớp, rồi sắp lại toàn bộ `results` theo điểm kết hợp này TRƯỚC bước round-robin đa dạng hóa - vì round-robin chỉ lấy tối đa 3 đoạn đầu mỗi văn bản nên phải ưu tiên đúng thứ tự từ trước đó. Boost nhỏ để chỉ tinh chỉnh thứ tự giữa các chunk có độ liên quan gần nhau, không để 1 chunk lệch chủ đề nhưng khớp `provision_type` lấn át chunk tương đồng ngữ nghĩa cao hơn hẳn.
-- **Bước 5 — Sinh câu trả lời có căn cứ:** đưa các chunk truy xuất được (kèm cảnh báo "đã bị sửa đổi bởi..." nếu có) vào context, LLM bắt buộc trích dẫn Điều/Khoản, không suy diễn ngoài context (nguyên tắc 2.1–2.3 trong `gemini_service.py`, hệ thống chỉ dẫn "chuyên gia tư vấn BHXH").
-
-### 6.3 Schema metadata mỗi chunk (đã triển khai trong `ingest_rag.py`)
+### 6. Schema metadata mỗi chunk (đã triển khai trong `ingest_rag.py`)
 
 ```json
 {
@@ -101,11 +97,4 @@ Bộ này phục vụ (a) test guard/routing layer, (b) test độ chính xác r
   ]
 }
 ```
-`amendments_to` được AI điền trực tiếp lúc bóc tách văn bản MỚI (biết ngay nó đang sửa gì); `amended_by` luôn khởi tạo rỗng lúc ingest và chỉ được `backfill_amended_by()` ghi ngược vào văn bản CŨ sau đó — xem chi tiết trong `ingest_rag.py`.
-
-## 7. Việc còn lại / phụ thuộc
-
-1. Văn bản Luật BHXH số 41/2024/QH15 đã có tại `documents/41_2024_QH15.txt` → còn cần chạy `ingest_rag.py --file documents/41_2024_QH15.txt` để nhúng vào Supabase (bảng `legal_documents`, hàm RPC `match_legal_documents` — đã đổi tên khỏi `tax_documents`/`match_tax_documents`).
-2. Đối chiếu và cập nhật lại toàn bộ số liệu đánh dấu `[cần đối chiếu]` ở mục 5 sau khi ingest xong.
-3. Toàn bộ ứng dụng (backend + frontend) đã được chuyển hẳn sang miền BHXH — không còn giữ song song chatbot thuế. `guard_service.py`, `gemini_service.py` (system prompt), `supabase_service.py`, `app.py` và frontend (`page.tsx`, `ChatView.tsx`) đều chỉ còn phục vụ tra cứu luật BHXH; các module/API/view riêng cho thuế (tax_calculator, tax_schedule_service, DashboardView, LedgerView, TaxScheduleView...) đã bị xóa.
-4. ~~Bước 4 ở mục 6.2 (hybrid re-rank theo `provision_type`) chưa triển khai~~ — đã triển khai (`guard_service.classify_provision_types` + `supabase_service.search_legal_documents(..., query_provision_types=...)`).
+`law_number`/`law_year` được tách bằng regex từ `law_name` đã làm sạch (không nhờ AI đoán số, tránh ảo giác), dùng để so khớp chính xác (`=`) thay vì "ilike" chuỗi con. `amendments_to` được AI điền trực tiếp lúc bóc tách văn bản MỚI (biết ngay nó đang sửa gì, nhờ đọc đúng câu chữ trong văn bản). `amended_by` luôn khởi tạo rỗng lúc ingest và chỉ được `backfill_amended_by()` ghi ngược vào văn bản cũ sau đó.

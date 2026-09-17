@@ -87,30 +87,43 @@ class GuardService:
             re.compile(r"<\s*(system|instruction|admin)\s*>", re.IGNORECASE),
         ]
 
-        # 5. Từ khóa cho needs_rag - dùng WORD-LEVEL matching (không cộng dồn substring).
+        # 5. Từ khóa cho needs_rag - mỗi từ khóa gắn 1 Hệ số tin cậy (Certainty
+        #    Factor - CF, kiểu MYCIN) thay vì cộng điểm tùy tiện, để "độ tin cậy
+        #    câu hỏi thuộc miền BHXH" có ý nghĩa xác suất/tin cậy rõ ràng, kết
+        #    hợp bằng công thức CF chuẩn (xem _combine_cf_list) thay vì cộng dồn
+        #    số nguyên. Core keyword (CF cao, 0.7-0.85): thuật ngữ BHXH đặc thù,
+        #    hiếm khi xuất hiện ngoài miền này. Context keyword (CF thấp, 0.15-0.3):
+        #    tín hiệu bổ trợ, dễ lẫn với miền khác (VD "luật", "công ty").
         #    Đặc tả đầy đủ: docs/bhxh_keyphrase_spec.md mục 4.
-        self.core_keywords = [
-            "bảo hiểm xã hội", "bhxh", "bhxh bắt buộc", "bhxh tự nguyện",
-            "sổ bảo hiểm xã hội", "mã số bhxh",
-            "chế độ ốm đau", "chế độ thai sản", "chế độ hưu trí", "chế độ tử tuất",
-            "lương hưu", "trợ cấp một lần", "trợ cấp hưu trí xã hội",
-            "bảo hiểm hưu trí bổ sung", "mức đóng bhxh", "tỷ lệ đóng bhxh",
-            "tiền lương đóng bhxh", "thời gian đóng bhxh", "rút bhxh một lần",
-            "hưởng bhxh một lần", "tuổi nghỉ hưu", "suy giảm khả năng lao động",
-            "trợ cấp tuất", "mai táng phí", "tham gia bhxh",
-            "cơ quan bảo hiểm xã hội", "quỹ bảo hiểm xã hội",
-        ]
-        self.context_keywords = [
-            "người lao động", "người sử dụng lao động", "hợp đồng lao động",
-            "tiền lương", "nghỉ việc", "nghỉ thai sản", "sinh con", "nuôi con nuôi",
-            "thai sản", "tai nạn lao động", "bệnh nghề nghiệp", "nghỉ hưu", "về hưu",
-            "trốn đóng", "chậm đóng", "nợ bảo hiểm", "truy thu",
-            "hồ sơ hưởng", "thủ tục hưởng", "giải quyết chế độ",
-            "khiếu nại", "tố cáo", "xử phạt", "thanh tra",
-            "doanh nghiệp", "công ty", "viên chức", "công chức", "lao động tự do",
-            "thân nhân", "bảo hiểm y tế", "bảo hiểm thất nghiệp",
-            "luật", "nghị định", "thông tư",
-        ]
+        self.core_keywords = {
+            "bảo hiểm xã hội": 0.75, "bhxh": 0.7, "bhxh bắt buộc": 0.8, "bhxh tự nguyện": 0.8,
+            "sổ bảo hiểm xã hội": 0.8, "mã số bhxh": 0.75,
+            "chế độ ốm đau": 0.8, "chế độ thai sản": 0.8, "chế độ hưu trí": 0.8, "chế độ tử tuất": 0.8,
+            "lương hưu": 0.75, "trợ cấp một lần": 0.7, "trợ cấp hưu trí xã hội": 0.85,
+            "bảo hiểm hưu trí bổ sung": 0.85, "mức đóng bhxh": 0.8, "tỷ lệ đóng bhxh": 0.8,
+            "tiền lương đóng bhxh": 0.8, "thời gian đóng bhxh": 0.8, "rút bhxh một lần": 0.85,
+            "hưởng bhxh một lần": 0.85, "tuổi nghỉ hưu": 0.7, "suy giảm khả năng lao động": 0.75,
+            "trợ cấp tuất": 0.8, "mai táng phí": 0.75, "tham gia bhxh": 0.75,
+            "cơ quan bảo hiểm xã hội": 0.8, "quỹ bảo hiểm xã hội": 0.8,
+        }
+        self.context_keywords = {
+            "người lao động": 0.3, "người sử dụng lao động": 0.3, "hợp đồng lao động": 0.3,
+            "tiền lương": 0.25, "nghỉ việc": 0.25, "nghỉ thai sản": 0.3, "sinh con": 0.3, "nuôi con nuôi": 0.3,
+            "thai sản": 0.3, "tai nạn lao động": 0.3, "bệnh nghề nghiệp": 0.3, "nghỉ hưu": 0.3, "về hưu": 0.3,
+            "trốn đóng": 0.3, "chậm đóng": 0.3, "nợ bảo hiểm": 0.3, "truy thu": 0.25,
+            "hồ sơ hưởng": 0.3, "thủ tục hưởng": 0.3, "giải quyết chế độ": 0.3,
+            "khiếu nại": 0.2, "tố cáo": 0.2, "xử phạt": 0.2, "thanh tra": 0.2,
+            "doanh nghiệp": 0.15, "công ty": 0.15, "viên chức": 0.25, "công chức": 0.25, "lao động tự do": 0.25,
+            "thân nhân": 0.25, "bảo hiểm y tế": 0.25, "bảo hiểm thất nghiệp": 0.25,
+            "luật": 0.15, "nghị định": 0.15, "thông tư": 0.15,
+        }
+
+        # Ngưỡng CF để kích hoạt RAG (needs_rag). 0.5 = "nhiều khả năng đúng hơn
+        # là sai" theo thang CF chuẩn [-1, 1]; một core keyword bất kỳ (CF thấp
+        # nhất 0.7) đã tự nó vượt ngưỡng này, nên vẫn giữ điều kiện "phải có ít
+        # nhất 1 core keyword" song song để tránh việc nhiều context keyword mơ
+        # hồ cộng dồn đủ CF mà không hề có tín hiệu BHXH rõ ràng nào.
+        self.needs_rag_cf_threshold = 0.5
 
         # 6. Từ khóa nhận diện "dạng quy định" (provision_type P1-P9) mà CÂU HỎI
         #    đang hỏi - dùng để hybrid re-rank kết quả RAG ở
@@ -167,12 +180,12 @@ class GuardService:
         """Bỏ khoảng trắng/ký tự đặc biệt/underscore để chống né kiểu 'q-u-ê-n đ-i'."""
         return re.sub(r"\W+", "", text.lower()).replace("_", "")
 
-    def _count_keyword_hits(self, clean_input_words: str, keywords: list[str]) -> set[str]:
+    def _count_keyword_hits(self, clean_input_words: str, keywords) -> set[str]:
         """
         Trả về TẬP HỢP các keyword canonical đã khớp (không cộng dồn theo substring
-        trùng lặp, VD 'rút bhxh một lần' chứa 'bhxh' chỉ tính là các match riêng biệt,
-        nhưng độ điểm được tính theo SỐ KEYWORD KHÁC NHAU khớp, không theo số lần
-        substring xuất hiện).
+        trùng lặp, VD 'rút bhxh một lần' chứa 'bhxh' chỉ tính là các match riêng
+        biệt). `keywords` có thể là list hoặc dict (keyword -> CF) - hàm chỉ lặp
+        qua các "khóa" (từ khóa), không quan tâm cấu trúc chứa nó.
         """
         hits = set()
         for kw in keywords:
@@ -180,6 +193,31 @@ class GuardService:
             if re.search(pattern, clean_input_words, flags=re.IGNORECASE):
                 hits.add(kw)
         return hits
+
+    @staticmethod
+    def _combine_two_cf(cf1: float, cf2: float) -> float:
+        """
+        Công thức kết hợp Hệ số tin cậy (Certainty Factor) chuẩn kiểu MYCIN, kết
+        hợp 2 bằng chứng ĐỘC LẬP thành 1 CF duy nhất - thay cho việc cộng điểm
+        tùy tiện. Với các giá trị luôn dương (trường hợp của core/context
+        keywords ở đây), công thức này tương đương 1 - (1-cf1)(1-cf2): mỗi bằng
+        chứng thêm vào làm tăng độ tin cậy nhưng giảm dần biên độ, không bao giờ
+        vượt quá 1.
+        """
+        if cf1 >= 0 and cf2 >= 0:
+            return cf1 + cf2 * (1 - cf1)
+        if cf1 < 0 and cf2 < 0:
+            return cf1 + cf2 * (1 + cf1)
+        return (cf1 + cf2) / (1 - min(abs(cf1), abs(cf2)))
+
+    def _combine_cf_list(self, cf_values: list[float]) -> float:
+        """Kết hợp tuần tự nhiều CF thành 1 giá trị duy nhất bằng _combine_two_cf.
+        Công thức CF là giao hoán/kết hợp (associative) với các giá trị cùng dấu,
+        nên thứ tự duyệt qua danh sách không ảnh hưởng tới kết quả cuối."""
+        combined = 0.0
+        for cf in cf_values:
+            combined = self._combine_two_cf(combined, cf)
+        return combined
 
     # ==========================================
     # QUY TRÌNH KIỂM TRA ĐẦU VÀO (INPUT PIPELINE)
@@ -272,9 +310,18 @@ class GuardService:
 
     def needs_rag(self, user_input: str) -> tuple[bool, str]:
         """
-        BƯỚC 4: Xác định câu hỏi có cần tra cứu RAG hay không, dùng scoring
-        dựa trên SỐ KEYWORD KHÁC NHAU khớp (word-boundary), không cộng dồn
-        theo substring trùng lặp.
+        BƯỚC 4: Xác định câu hỏi có cần tra cứu RAG hay không, dùng mô hình Hệ số
+        tin cậy (Certainty Factor): mỗi từ khóa khớp đóng góp 1 CF độc lập
+        (self.core_keywords/self.context_keywords), các CF được kết hợp bằng
+        công thức CF chuẩn (_combine_cf_list) thành CF_kết_hợp duy nhất, sau đó
+        so với ngưỡng self.needs_rag_cf_threshold - thay cho cách cộng điểm tùy
+        ý (2đ/1đ) trước đây.
+
+        Vẫn giữ điều kiện "phải có ít nhất 1 core keyword": vì CF của core
+        keyword thấp nhất (0.7) đã tự nó vượt ngưỡng 0.5, nếu bỏ điều kiện này
+        thì chỉ cần 2 context keyword mơ hồ (VD "luật" + "công ty", CF 0.15 mỗi
+        cái) kết hợp lại cũng có thể vượt 0.5 dù câu hỏi không hề nhắc gì tới
+        BHXH - core keyword là điều kiện CẦN, CF là điều kiện ĐỦ.
         """
         if not user_input or not user_input.strip():
             return False, "Câu hỏi trống"
@@ -287,21 +334,15 @@ class GuardService:
         core_hits = self._count_keyword_hits(clean_input, self.core_keywords)
         context_hits = self._count_keyword_hits(clean_input, self.context_keywords)
 
-        # Điểm: mỗi core keyword riêng biệt = 2đ, mỗi context keyword riêng biệt = 1đ
-        score = 2 * len(core_hits) + 1 * len(context_hits)
+        cf_values = [self.core_keywords[kw] for kw in core_hits] + \
+                    [self.context_keywords[kw] for kw in context_hits]
+        combined_cf = self._combine_cf_list(cf_values)
 
-        # Ngưỡng = 2 (không phải 3): chỉ cần khớp ĐÚNG 1 core keyword là đủ để
-        # bật RAG, vì các core keyword vốn đã là tên/thuật ngữ BHXH rõ ràng
-        # (vd "bảo hiểm xã hội", "bhxh"), tự thân đã đủ tin cậy mà không cần
-        # thêm context keyword đi kèm. Ngưỡng 3 trước đây khiến các câu hỏi
-        # ngắn, trực diện kiểu "tôi muốn đóng bảo hiểm xã hội thì đóng ở đâu"
-        # (1 core keyword, 0 context keyword -> điểm 2) bị coi là "không cần
-        # RAG" và AI trả lời bằng kiến thức chung thay vì tài liệu đã nạp.
-        if core_hits and score >= 2:
+        if core_hits and combined_cf >= self.needs_rag_cf_threshold:
             return True, ""
         else:
             reason = "Câu hỏi không liên quan đến bảo hiểm xã hội"
-            logger.info(f"BỊ CHẶN (needs_rag): {reason}")
+            logger.info(f"BỊ CHẶN (needs_rag): {reason} (CF={combined_cf:.2f})")
             return False, reason
 
     def classify_provision_types(self, user_input: str) -> set[str]:
