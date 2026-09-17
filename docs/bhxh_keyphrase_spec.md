@@ -63,7 +63,7 @@ Mỗi keyword được gán 1 **Hệ số tin cậy (Certainty Factor - CF)** tr
 **Core keywords (tín hiệu trực tiếp, mạnh — CF 0.7–0.85):**
 bảo hiểm xã hội, bhxh, bhxh bắt buộc, bhxh tự nguyện, sổ bảo hiểm xã hội, mã số bhxh, chế độ ốm đau, chế độ thai sản, chế độ hưu trí, chế độ tử tuất, lương hưu, trợ cấp một lần, trợ cấp hưu trí xã hội, bảo hiểm hưu trí bổ sung, mức đóng bhxh, tỷ lệ đóng bhxh, tiền lương đóng bhxh, thời gian đóng bhxh, rút bhxh một lần, hưởng bhxh một lần, tuổi nghỉ hưu, suy giảm khả năng lao động, trợ cấp tuất, mai táng phí, tham gia bhxh, cơ quan bảo hiểm xã hội, quỹ bảo hiểm xã hội.
 
-**Context keywords (tín hiệu bổ trợ, cần kết hợp — CF 0.15–0.35):**
+**Context keywords (tín hiệu bổ trợ, cần kết hợp — CF 0.15–0.3):**
 người lao động, người sử dụng lao động, hợp đồng lao động, tiền lương, nghỉ việc, nghỉ thai sản, sinh con, nuôi con nuôi, thai sản, tai nạn lao động, bệnh nghề nghiệp, nghỉ hưu, về hưu, trốn đóng, chậm đóng, nợ bảo hiểm, truy thu, hồ sơ hưởng, thủ tục hưởng, giải quyết chế độ, khiếu nại, tố cáo, xử phạt, thanh tra, doanh nghiệp, công ty, viên chức, công chức, lao động tự do, thân nhân, bảo hiểm y tế, bảo hiểm thất nghiệp, luật, nghị định, thông tư.
 
 **Từ khóa dấu hiệu cho `provision_type` (mục 3), dùng bởi `classify_provision_types()`:** mỗi mã P1–P9 có 1 danh sách cụm từ riêng trong `self.provision_type_keywords` (VD P5 "Điều kiện hưởng" ↔ "điều kiện", "đủ điều kiện", "khi nào được hưởng"...) — xem đầy đủ trong code, không lặp lại ở đây để tránh 2 nguồn dữ liệu lệch nhau.
