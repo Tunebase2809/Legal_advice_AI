@@ -148,10 +148,9 @@ def backfill_amended_by(chunks):
 # 2. AI TRÍCH XUẤT VÀ CHIA ĐOẠN (STRUCTURAL CHUNKING)
 # ==========================================
 
-# Phân loại "dạng quy định" cho từng chunk (xem docs/bhxh_keyphrase_spec.md mục 3).
-# Dùng chung cho mọi văn bản, không riêng miền BHXH. Danh sách P1-P9 lấy từ
-# PROVISION_TYPE_LABELS trong services/guard_service.py (nguồn duy nhất), để
-# tránh 2 nơi định nghĩa cùng 1 danh sách rồi lệch nhau khi sửa sau này -
+# Phân loại "dạng quy định" cho từng chunk.
+# Danh sách P1-P9 lấy từ PROVISION_TYPE_LABELS trong services/guard_service.py (nguồn duy nhất),
+# để tránh 2 nơi định nghĩa cùng 1 danh sách rồi lệch nhau khi sửa sau này -
 # guard_service.py dùng chính danh sách đó để đoán "dạng câu hỏi" và hiển thị
 # nhãn đầy đủ cho người dùng lúc tra cứu.
 PROVISION_TYPE_LEGEND = "\n" + "\n".join(f"- {code}: {label}" for code, label in PROVISION_TYPE_LABELS.items()) + "\n"
@@ -178,7 +177,7 @@ def extract_metadata_with_gemini(header_text):
     for attempt in range(3):
         try:
             response = client.models.generate_content(
-                model="gemini-3.1-flash-lite",
+                model="gemini-3.5-flash-lite",
                 contents=[header_text, prompt],
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
@@ -480,6 +479,12 @@ DOC_TYPE_KEYWORDS = [
     "Thông tư liên tịch", "Thông tư", "Công văn",
 ]
 
+# "Luật"/"Bộ luật" theo quy ước luôn được gọi bằng TÊN ĐẦY ĐỦ (VD "Luật Bảo hiểm
+# xã hội số 41/2024/QH15", "Bộ luật Lao động số ...") - khác với các loại văn bản
+# dưới luật (Nghị định, Thông tư, Quyết định...) chỉ cần "[Loại văn bản] số:
+# [Số hiệu]" là đủ để tra cứu, không cần tên mô tả.
+LAW_TYPES_KEEP_FULL_NAME = {"Luật", "Bộ luật"}
+
 def extract_doc_header_hint(text):
     """
     Dò "Loại văn bản" (Luật/Nghị định/Thông tư...) + "Số hiệu" (vd: 12/2025/TT-BNV)
@@ -511,19 +516,23 @@ def extract_doc_header_hint(text):
         d, m, y = date_match.groups()
         issue_date = f"{y}-{int(m):02d}-{int(d):02d}"
 
-    law_name = f"{doc_type} số: {so_hieu}" if doc_type and so_hieu else None
+    if doc_type and so_hieu and doc_type not in LAW_TYPES_KEEP_FULL_NAME:
+        law_name = f"{doc_type} số: {so_hieu}"
+    else:
+        law_name = None
 
     return {"law_name": law_name, "type": doc_type, "issue_date": issue_date}
 
 def build_clean_law_name(raw_name, doc_type_hint=None):
     """
-    Chuẩn hóa "law_name" luôn về đúng dạng "[Loại văn bản] số: [Số hiệu]",
-    bỏ phần tên mô tả mà AI (hoặc nguồn) hay chèn ở giữa - ví dụ AI trả về
-    "Luật Bảo hiểm xã hội số 41/2024/QH15" thì rút gọn thành
-    "Luật số: 41/2024/QH15". Áp dụng thống nhất cho MỌI nguồn nạp dữ liệu
-    (URL, file PDF/DOCX/TXT, thư mục) chứ không chỉ riêng URL, vì trước đây
-    việc rút gọn chỉ cắt bỏ phần THỪA SAU số hiệu chứ không bỏ được tên mô
-    tả nằm xen giữa loại văn bản và số hiệu.
+    Chuẩn hóa "law_name":
+    - Với "Luật"/"Bộ luật" (LAW_TYPES_KEEP_FULL_NAME): GIỮ NGUYÊN tên đầy đủ, bao
+      gồm cả tên mô tả ở giữa (VD "Luật Bảo hiểm xã hội số 41/2024/QH15"), đúng
+      quy ước người dùng thực tế gọi tên luật - chỉ cắt phần THỪA nằm SAU số hiệu.
+    - Với các loại văn bản còn lại (Nghị định, Thông tư, Quyết định...): rút gọn
+      về đúng "[Loại văn bản] số: [Số hiệu]", bỏ phần tên mô tả mà AI (hoặc
+      nguồn) hay chèn ở giữa, vì không cần tên mô tả để tra cứu các loại này.
+    Áp dụng thống nhất cho MỌI nguồn nạp dữ liệu (URL, file PDF/DOCX/TXT, thư mục).
     """
     if not raw_name:
         return raw_name
@@ -542,7 +551,7 @@ def build_clean_law_name(raw_name, doc_type_hint=None):
             doc_type_pos = m.start()
     doc_type = doc_type or doc_type_hint
 
-    if not doc_type:
+    if not doc_type or doc_type in LAW_TYPES_KEEP_FULL_NAME:
         return raw_name[:so_hieu_match.end()].strip()
 
     return f"{doc_type} số: {so_hieu}"
@@ -563,9 +572,6 @@ def extract_law_text_from_html(html):
     else:
         raw_text = soup.get_text(separator='\n')
 
-    # Gộp khoảng trắng thừa trong từng dòng nhưng GIỮ LẠI ranh giới dòng,
-    # vì split_text_by_articles() cần dòng bắt đầu bằng "Điều "/"Chương " để
-    # chia đoạn đúng cấu trúc (trước đây bị gộp thành 1 dòng duy nhất).
     lines = (' '.join(line.split()) for line in raw_text.splitlines())
     text = '\n'.join(line for line in lines if line)
 

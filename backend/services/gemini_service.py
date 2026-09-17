@@ -21,7 +21,7 @@ class GeminiService:
         self.guard_service = GuardService()
         if api_key:
             self.client = genai.Client(api_key=api_key)
-            self.model_name = 'gemini-3.1-flash-lite'
+            self.model_name = 'gemini-3.5-flash-lite'
         else:
             self.client = None
             logger.warning("GEMINI_API_KEY is not set.")
@@ -64,8 +64,6 @@ class GeminiService:
 
         # GUARD - RAG CONTEXT: sanitize + kiểm tra dấu hiệu prompt injection
         # bị chèn trong tài liệu truy xuất được TRƯỚC KHI đưa vào prompt của LLM.
-        # Trước đây "context" được nhét thẳng vào full_prompt mà không qua bước
-        # này, nên nội dung độc hại trong nguồn RAG có thể chiếm quyền điều khiển AI.
         safe_context = self.guard_service.sanitize_input(context) if context else ""
         if safe_context:
             context_is_safe, context_block_reason = self.guard_service.check_rag_context([safe_context])
@@ -88,7 +86,7 @@ class GeminiService:
             1.1 Giới hạn chủ đề: Nếu câu hỏi không liên quan đến luật/nghị định/thông tư về Bảo hiểm xã hội (ngoại trừ các câu chào hỏi xã giao hoặc cảm ơn thông thường), hãy từ chối lịch sự: "Xin lỗi, tôi không thể trả lời!".
             1.2 Đối tượng: Tư vấn cho mọi đối tượng liên quan đến Luật Bảo hiểm xã hội (người lao động, người sử dụng lao động, người tham gia BHXH tự nguyện, thân nhân), không giới hạn vào một nhóm cụ thể trừ khi câu hỏi nêu rõ.
         2. Quy tắc Áp dụng Văn bản Pháp lý
-            2.1 Tuân thủ Ngữ cảnh: Tuyệt đối KHÔNG tự suy diễn hoặc bịa đặt nội dung. Chỉ trả lời dựa trên "Ngữ cảnh pháp lý" được cung cấp. Luôn trích dẫn nguồn luật (Tên Luật/Nghị định/Thông tư, Điều, Khoản) ở cuối câu trả lời hoặc ngay cạnh luận điểm.
+            2.1 Tuân thủ Ngữ cảnh: Tuyệt đối KHÔNG tự suy diễn hoặc bịa đặt nội dung. Chỉ trả lời dựa trên "Ngữ cảnh pháp lý" được cung cấp. Luôn trích dẫn nguồn luật (Tên Luật/Nghị định/Thông tư, Điều, Khoản) ở ngay cạnh luận điểm, hoặc cuối câu trả lời.
             2.2 Ưu tiên văn bản mới nhất: Văn bản nào ban hành SAU (năm lớn hơn, hoặc ngày mới hơn) sẽ có giá trị áp dụng ưu tiên nhất, BẤT KỂ loại văn bản là gì. TUYỆT ĐỐI KHÔNG lập luận 'Luật có giá trị cao hơn Nghị định/Thông tư' để bỏ qua số liệu của văn bản dưới luật mới hơn.
             2.3 Xử lý Sửa đổi/Bổ sung: Nếu ngữ cảnh có phần "THÔNG TIN SỬA ĐỔI/BỔ SUNG", BẮT BUỘC đối chiếu Điều/Khoản tương ứng giữa văn bản gốc và văn bản sửa đổi. Chỉ trình bày vô cùng ngắn gọn các điểm mới nhất đang được áp dụng.
             2.4 Nếu không tìm thấy quy định phù hợp trong "Ngữ cảnh pháp lý", hãy nói rõ là chưa tìm thấy căn cứ, không được tự bịa ra điều luật.
@@ -130,7 +128,6 @@ class GeminiService:
 
                 # GUARD - OUTPUT: kiểm tra phản hồi trước khi trả về người dùng
                 # (chặn rỗng, chặn rò rỉ system prompt/context, chặn sai ngôn ngữ).
-                # Trước đây response.text được trả thẳng, bỏ qua toàn bộ output-guard.
                 is_valid, invalid_reason = self.guard_service.check_response(response.text)
                 if not is_valid:
                     logger.error(f"Phản hồi AI bị chặn bởi output-guard. Lý do: {invalid_reason}")
@@ -148,7 +145,7 @@ class GeminiService:
                         continue
                     else:
                         # Lỗi không thể khắc phục bằng retry (ví dụ: lỗi format, bị chặn, v.v.).
-                        # KHÔNG lộ error_msg thô (có thể chứa thông tin nội bộ/API) cho người dùng.
+                        # Không lộ error_msg thô (có thể chứa thông tin nội bộ/API) cho người dùng.
                         return "Xin lỗi, đã có lỗi xảy ra khi xử lý yêu cầu của bạn. Vui lòng thử lại sau."
                 return "Xin lỗi, hệ thống AI đang quá tải hoặc gặp lỗi. Vui lòng thử lại sau."
             
