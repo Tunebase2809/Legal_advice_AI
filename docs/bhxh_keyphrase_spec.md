@@ -3,14 +3,15 @@
 ## 1. Lĩnh vực và văn bản pháp luật được chọn
 
 - **Lĩnh vực:** Bảo hiểm xã hội (BHXH)
-Cả 6 văn bản dưới đây **đã ingest xong** vào bảng `legal_documents` trên Supabase (đã nhúng vector, sẵn sàng để `search_legal_documents` truy xuất):
+Cả 7 văn bản dưới đây **đã ingest xong** vào bảng `legal_documents` trên Supabase (đã nhúng vector, sẵn sàng để `search_legal_documents` truy xuất):
 
 1. Luật Bảo hiểm xã hội số 41/2024/QH15 (hiệu lực 01/07/2025, thay thế Luật BHXH 2014).
-2. Nghị định số 157/2025/NĐ-CP: BHXH bắt buộc đối với quân nhân, công an nhân dân, dân quân thường trực, người làm công tác cơ yếu hưởng lương như quân nhân.
-3. Nghị định số 158/2025/NĐ-CP: hướng dẫn chi tiết BHXH bắt buộc.
-4. Nghị định số 159/2025/NĐ-CP: hướng dẫn chi tiết BHXH tự nguyện.
-5. Nghị định số 176/2025/NĐ-CP: trợ cấp hưu trí xã hội.
-6. Nghị định số 274/2025/NĐ-CP: chậm đóng, trốn đóng BHXH bắt buộc/bảo hiểm thất nghiệp; khiếu nại, tố cáo về BHXH.
+2. Luật Bảo hiểm xã hội số 58/2014/QH13 (luật cũ, chỉ dành cho mục đích đối chiếu dữ liệu, không dùng để trả lời câu hỏi).
+3. Nghị định số 157/2025/NĐ-CP: BHXH bắt buộc đối với quân nhân, công an nhân dân, dân quân thường trực, người làm công tác cơ yếu hưởng lương như quân nhân.
+4. Nghị định số 158/2025/NĐ-CP: hướng dẫn chi tiết BHXH bắt buộc.
+5. Nghị định số 159/2025/NĐ-CP: hướng dẫn chi tiết BHXH tự nguyện.
+6. Nghị định số 176/2025/NĐ-CP: trợ cấp hưu trí xã hội.
+7. Nghị định số 274/2025/NĐ-CP: chậm đóng, trốn đóng BHXH bắt buộc/bảo hiểm thất nghiệp; khiếu nại, tố cáo về BHXH.
 
 - **Đối tượng người dùng mục tiêu:** người lao động, người sử dụng lao động, người tham gia BHXH tự nguyện, thân nhân người tham gia.
 
