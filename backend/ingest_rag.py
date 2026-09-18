@@ -77,7 +77,66 @@ def backfill_amended_by(chunks):
     Đây là bước thay thế cho việc quét/so sánh ilike + ngày tháng ở mỗi câu hỏi
     của người dùng (search_legal_documents trước đây) - quan hệ sửa đổi giờ được
     tính MỘT LẦN lúc ingest, runtime chỉ cần đọc "amended_by" có sẵn.
+
+    LƯU Ý: hàm này chỉ xét "amendments_to" của các chunk VỪA insert (tham số
+    "chunks"). Nếu văn bản sửa đổi được ingest TRƯỚC văn bản cũ mà nó sửa đổi,
+    lúc chạy hàm này văn bản cũ chưa tồn tại trong DB nên sẽ không tìm thấy gì
+    để ghi "amended_by" - dùng backfill_all_amended_by() bên dưới để quét lại
+    toàn bộ DB và bù cho các trường hợp ingest sai thứ tự này.
     """
+    _apply_amendments_backfill(chunks)
+
+def backfill_all_amended_by():
+    """
+    Quét TOÀN BỘ bảng legal_documents (không chỉ batch vừa insert) để tìm mọi
+    chunk có "amendments_to" khác rỗng rồi ghi lại "amended_by" cho văn bản cũ
+    tương ứng. Dùng để sửa lại dữ liệu khi các văn bản được ingest không đúng
+    thứ tự thời gian (văn bản mới ingest trước văn bản cũ mà nó sửa đổi).
+    """
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    print("🔍 Đang quét toàn bộ cơ sở dữ liệu để tìm các văn bản có khai báo sửa đổi (amendments_to)...")
+    items_with_amendments = []
+    page_size = 1000
+    offset = 0
+    while True:
+        try:
+            resp = requests.get(
+                f"{SUPABASE_URL}/rest/v1/legal_documents",
+                headers={**headers, "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"},
+                params={"select": "metadata"},
+                timeout=30
+            )
+        except Exception as e:
+            print(f"  [!] Lỗi truy vấn danh sách văn bản: {e}")
+            return
+
+        if resp.status_code not in (200, 206):
+            print(f"  [!] Lỗi truy vấn danh sách văn bản ({resp.status_code}): {resp.text}")
+            return
+
+        page = resp.json()
+        for row in page:
+            meta = row.get("metadata") or {}
+            if meta.get("amendments_to"):
+                items_with_amendments.append({"metadata": meta})
+
+        if len(page) < page_size:
+            break
+        offset += page_size
+
+    if not items_with_amendments:
+        print("Không tìm thấy văn bản nào có khai báo sửa đổi (amendments_to).")
+        return
+
+    print(f"Tìm thấy {len(items_with_amendments)} chunk có khai báo sửa đổi. Đang đối chiếu và ghi lại amended_by...")
+    _apply_amendments_backfill(items_with_amendments)
+
+def _apply_amendments_backfill(chunks):
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -716,10 +775,17 @@ def main():
     parser.add_argument('--pdf', type=str, help='Đường dẫn file PDF (Đã cũ, khuyên dùng --file)')
     parser.add_argument('--file', type=str, help='Đường dẫn file hoặc thư mục tài liệu (.pdf, .docx, .doc, .txt, .html, .htm)')
     parser.add_argument('--text', type=str, help='Câu text trực tiếp')
+    parser.add_argument('--fix-amended-by', action='store_true',
+                         help='Quét lại toàn bộ DB để bù amended_by cho các văn bản ingest sai thứ tự (không ingest gì mới)')
     args = parser.parse_args()
 
     if not GEMINI_API_KEY or not SUPABASE_URL:
         print("Lỗi: Thiếu cấu hình GEMINI_API_KEY hoặc SUPABASE_URL trong .env")
+        return
+
+    if args.fix_amended_by:
+        backfill_all_amended_by()
+        print("\n🎉 HOÀN TẤT ĐỐI CHIẾU LẠI QUAN HỆ SỬA ĐỔI (amended_by)!")
         return
 
     # Nếu chạy không đối số thì kích hoạt giao diện tương tác
@@ -728,9 +794,10 @@ def main():
         print("1. Đường dẫn website")
         print("2. File văn bản luật (.pdf, .docx, .doc, .txt, .html, .htm)")
         print("3. Thư mục chứa văn bản luật")
-        
+        print("4. Quét lại toàn bộ DB để bù amended_by (sửa dữ liệu ingest sai thứ tự)")
+
         try:
-            choice = input("Nhập lựa chọn của bạn (1-3): ").strip()
+            choice = input("Nhập lựa chọn của bạn (1-4): ").strip()
             
             if choice == '1':
                 url = input("Vui lòng nhập đường dẫn tới website: ").strip()
@@ -757,15 +824,20 @@ def main():
                     print("Lỗi: Đường dẫn thư mục không được để trống.")
                     return
                 process_directory(dir_path)
-                
+
+            elif choice == '4':
+                backfill_all_amended_by()
+                print("\n🎉 HOÀN TẤT ĐỐI CHIẾU LẠI QUAN HỆ SỬA ĐỔI (amended_by)!")
+                return
+
             else:
                 print("Lỗi: Lựa chọn không hợp lệ.")
                 return
-                
+
         except KeyboardInterrupt:
             print("\nĐã hủy quá trình bởi người dùng.")
             return
-            
+
         print("\n🎉 HOÀN TẤT NẠP TÀI LIỆU VÀO CƠ SỞ TRI THỨC!")
         return
 
