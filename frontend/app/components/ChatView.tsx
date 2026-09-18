@@ -561,7 +561,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                                   letterSpacing: '0.03em',
                                 }}>
                                   <i className="fa-solid fa-circle-info"></i>
-                                  Nguồn tham chiếu: 0 ({msg.ragBypassedReason})
+                                  Nguồn tham chiếu: 0 {/*({msg.ragBypassedReason})*/}
                                 </div>
                               ) : (
                                 <SourceDetails sources={msg.sources || []} onSourceClick={handleSourceClick} />

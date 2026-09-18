@@ -320,7 +320,7 @@ class GuardService:
         if len(context_hits) >= self.context_hits_threshold:
             return True, ""
 
-        reason = "Câu hỏi không liên quan đến bảo hiểm xã hội"
+        reason = "Câu hỏi không đủ dữ kiện, hoặc không liên quan đến bảo hiểm xã hội"
         logger.info(f"BỊ CHẶN (needs_rag): {reason} (context_hits={len(context_hits)}/{self.context_hits_threshold})")
         return False, reason
 
