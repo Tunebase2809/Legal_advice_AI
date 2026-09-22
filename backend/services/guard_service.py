@@ -108,12 +108,8 @@ class GuardService:
             "bảo hiểm hưu trí bổ sung", "mức đóng bhxh", "tỷ lệ đóng bhxh",
             "tiền lương đóng bhxh", "thời gian đóng bhxh", "rút bhxh một lần",
             "hưởng bhxh một lần", "tuổi nghỉ hưu", "suy giảm khả năng lao động",
-            "trợ cấp tuất", "mai táng phí", "tham gia bhxh",
+            "trợ cấp tuất", "trợ cấp tử tuất", "mai táng phí", "tham gia bhxh",
             "cơ quan bảo hiểm xã hội", "quỹ bảo hiểm xã hội",
-            # Chuyển từ context_keywords lên: đây là tên chế độ BHXH cụ thể (tai nạn
-            # lao động - bệnh nghề nghiệp), đủ đặc thù để tự thân kích hoạt RAG một
-            # mình, không cần thêm bằng chứng khác - giống "chế độ ốm đau"/"chế độ
-            # thai sản" ở trên.
             "tai nạn lao động", "bệnh nghề nghiệp",
         ]
         self.context_keywords = [
@@ -126,11 +122,6 @@ class GuardService:
             "doanh nghiệp", "công ty", "viên chức", "công chức", "lao động tự do",
             "thân nhân", "bảo hiểm", "bảo hiểm y tế", "bảo hiểm thất nghiệp",
             "luật", "nghị định", "thông tư",
-            # Bổ sung thêm để tăng khả năng Tầng 2 (needs_rag) nhận diện đúng các
-            # câu hỏi thật diễn đạt tự nhiên mà không gọi tên "bảo hiểm xã hội"/
-            # "bhxh" - vẫn an toàn vì Tầng 2 luôn cần ĐỦ 3 từ khác nhau mới kích
-            # hoạt, nên 1 từ khá chung (VD "quyền lợi") đứng riêng lẻ không đủ gây
-            # false positive.
             "mức hưởng", "tỷ lệ hưởng", "cách tính", "công thức tính", "quyền lợi",
             "ốm đau", "tử tuất", "nghỉ ốm", "bảo lưu", "chốt sổ", "trừ lương hưu",
         ]
