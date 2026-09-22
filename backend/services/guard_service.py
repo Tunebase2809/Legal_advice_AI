@@ -124,7 +124,7 @@ class GuardService:
             "hồ sơ hưởng", "thủ tục hưởng", "giải quyết chế độ", "nộp hồ sơ", "giải quyết hồ sơ",
             "khiếu nại", "tố cáo", "xử phạt", "thanh tra",
             "doanh nghiệp", "công ty", "viên chức", "công chức", "lao động tự do",
-            "thân nhân", "bảo hiểm y tế", "bảo hiểm thất nghiệp",
+            "thân nhân", "bảo hiểm", "bảo hiểm y tế", "bảo hiểm thất nghiệp",
             "luật", "nghị định", "thông tư",
             # Bổ sung thêm để tăng khả năng Tầng 2 (needs_rag) nhận diện đúng các
             # câu hỏi thật diễn đạt tự nhiên mà không gọi tên "bảo hiểm xã hội"/
