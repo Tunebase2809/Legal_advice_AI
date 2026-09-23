@@ -30,5 +30,7 @@ scratch_*.py
 test_*.py
 docs.json
 walkthrough.md
+*.pptx
+*.docx
 # Root dependencies
 node_modules/
