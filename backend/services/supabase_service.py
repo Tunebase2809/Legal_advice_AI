@@ -264,7 +264,16 @@ class SupabaseService:
                         refs_str = "; ".join(self._format_amendment_ref(ref) for ref in amended_by_refs)
                         amended_info = f"\n⚠️ CẢNH BÁO: Điều/Khoản này có thể ĐÃ BỊ SỬA ĐỔI/BÃI BỎ bởi: {refs_str}."
 
-                    context += f"--- [{law_name}] (Điều: {article}, Khoản: {section}) ---\nNội dung: {row.get('content', '')}{amended_info}\n\n"
+                    superseded_by = meta.get('superseded_by')
+                    expired_tag = ""
+                    if superseded_by:
+                        expired_tag = " [ĐÃ HẾT HIỆU LỰC]"
+                        amended_info += (
+                            f"\n⛔ ĐÃ HẾT HIỆU LỰC: Văn bản này đã bị thay thế toàn bộ bởi {superseded_by}. "
+                            f"KHÔNG áp dụng như quy định hiện hành."
+                        )
+
+                    context += f"--- [{law_name}]{expired_tag} (Điều: {article}, Khoản: {section}) ---\nNội dung: {row.get('content', '')}{amended_info}\n\n"
 
                 # Đưa các đoạn sửa đổi vào Context để AI so sánh
                 if amendment_docs:
@@ -310,22 +319,23 @@ class SupabaseService:
     @staticmethod
     def _ref_key(ref):
         """Khóa duy nhất cho 1 tham chiếu amended_by/amendments_to, dùng để khử trùng lặp khi duyệt BFS."""
-        return (ref.get('law_number'), ref.get('law_year'), ref.get('article'), ref.get('section'))
+        return (ref.get('law_number'), ref.get('law_year'), ref.get('law_suffix'), ref.get('article'), ref.get('section'))
 
     def _fetch_chunks_by_refs(self, refs):
         """
         Fetch đúng các chunk khớp với danh sách `refs` (mỗi ref: law_number/law_year/
-        article[/section]) bằng MỘT request PostgREST duy nhất
+        law_suffix/article[/section]) bằng MỘT request PostgREST duy nhất
         (or=(and(...),and(...)) khớp chính xác), thay vì "ilike" content + so sánh
         ngày tháng ở mỗi câu hỏi như cách làm cũ (_check_for_updates).
         """
         and_groups = []
         for ref in refs:
-            if not ref.get('law_number') or not ref.get('law_year') or not ref.get('article'):
+            if not ref.get('law_number') or not ref.get('law_year') or not ref.get('law_suffix') or not ref.get('article'):
                 continue
             conditions = [
                 f"metadata->>law_number.eq.{ref['law_number']}",
                 f"metadata->>law_year.eq.{ref['law_year']}",
+                f"metadata->>law_suffix.eq.{ref['law_suffix']}",
                 f"metadata->>article.eq.{ref['article']}",
             ]
             if ref.get('section'):
@@ -401,11 +411,12 @@ class SupabaseService:
         """Định dạng 1 tham chiếu amended_by thành chuỗi dễ đọc, VD: '141/2026 (Điều 1, Khoản 1)'."""
         law_number = ref.get('law_number', '?')
         law_year = ref.get('law_year', '?')
+        law_suffix = f"/{ref['law_suffix']}" if ref.get('law_suffix') else ""
         parts = [f"Điều {ref['article']}"] if ref.get('article') else []
         if ref.get('section'):
             parts.append(f"Khoản {ref['section']}")
         suffix = f" ({', '.join(parts)})" if parts else ""
-        return f"{law_number}/{law_year}{suffix}"
+        return f"{law_number}/{law_year}{law_suffix}{suffix}"
 
     def get_sessions(self, user_token):
         if not self.url or not self.key or not user_token:

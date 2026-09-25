@@ -85,6 +85,82 @@ def backfill_amended_by(chunks):
     toàn bộ DB và bù cho các trường hợp ingest sai thứ tự này.
     """
     _apply_amendments_backfill(chunks)
+    _apply_supersedes_backfill(chunks)
+
+def _apply_supersedes_backfill(chunks):
+    """
+    Với mỗi chunk có "supersedes" (văn bản này thay thế toàn bộ văn bản khác),
+    ghi "superseded_by" = law_name của văn bản mới vào MỌI chunk của văn bản cũ
+    đang có trong DB. "superseded_by" chỉ dùng để hiển thị cảnh báo
+    "ĐÃ HẾT HIỆU LỰC", không dùng để so khớp.
+    """
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    done = set()
+    any_marked = False
+    for item in chunks:
+        meta = item.get("metadata", {}) or {}
+        new_law_name = meta.get("law_name")
+        for target in (meta.get("supersedes") or []):
+            if not target.get("law_suffix"):
+                continue
+            key = (target["law_number"], target["law_year"], target["law_suffix"], new_law_name)
+            if not new_law_name or key in done:
+                continue
+            done.add(key)
+
+            marked = 0
+            offset, page_size = 0, 1000
+            while True:
+                try:
+                    resp = requests.get(
+                        f"{SUPABASE_URL}/rest/v1/legal_documents",
+                        headers={**headers, "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"},
+                        params={
+                            "select": "id,metadata",
+                            "metadata->>law_number": f"eq.{target['law_number']}",
+                            "metadata->>law_year": f"eq.{target['law_year']}",
+                            "metadata->>law_suffix": f"eq.{target['law_suffix']}",
+                        },
+                        timeout=30
+                    )
+                except Exception as e:
+                    print(f"  [!] Lỗi truy vấn văn bản bị thay thế: {e}")
+                    break
+                if resp.status_code not in (200, 206):
+                    break
+                page = resp.json()
+                for row in page:
+                    row_meta = row.get("metadata") or {}
+                    if row_meta.get("superseded_by") == new_law_name:
+                        continue
+                    row_meta["superseded_by"] = new_law_name
+                    try:
+                        patch_resp = requests.patch(
+                            f"{SUPABASE_URL}/rest/v1/legal_documents",
+                            headers=headers,
+                            params={"id": f"eq.{row['id']}"},
+                            json={"metadata": row_meta}
+                        )
+                        if patch_resp.status_code in (200, 204):
+                            marked += 1
+                    except Exception as e:
+                        print(f"  [!] Lỗi ghi superseded_by: {e}")
+                if len(page) < page_size:
+                    break
+                offset += page_size
+
+            if marked:
+                any_marked = True
+                print(f"  [+] {new_law_name} thay thế toàn bộ văn bản {target['law_number']}/{target['law_year']}/{target['law_suffix']}: "
+                      f"đã đánh dấu 'ĐÃ HẾT HIỆU LỰC' cho {marked} đoạn.")
+
+    if any_marked:
+        print("✅ Đã cập nhật trạng thái hết hiệu lực (superseded_by) cho các văn bản cũ liên quan.")
 
 def backfill_all_amended_by():
     """
@@ -122,7 +198,7 @@ def backfill_all_amended_by():
         page = resp.json()
         for row in page:
             meta = row.get("metadata") or {}
-            if meta.get("amendments_to"):
+            if meta.get("amendments_to") or meta.get("supersedes"):
                 items_with_amendments.append({"metadata": meta})
 
         if len(page) < page_size:
@@ -133,8 +209,9 @@ def backfill_all_amended_by():
         print("Không tìm thấy văn bản nào có khai báo sửa đổi (amendments_to).")
         return
 
-    print(f"Tìm thấy {len(items_with_amendments)} chunk có khai báo sửa đổi. Đang đối chiếu và ghi lại amended_by...")
+    print(f"Tìm thấy {len(items_with_amendments)} chunk có khai báo sửa đổi/thay thế. Đang đối chiếu và ghi lại amended_by/superseded_by...")
     _apply_amendments_backfill(items_with_amendments)
+    _apply_supersedes_backfill(items_with_amendments)
 
 def _apply_amendments_backfill(chunks):
     headers = {
@@ -153,17 +230,21 @@ def _apply_amendments_backfill(chunks):
         amender_ref = {
             "law_number": meta.get("law_number"),
             "law_year": meta.get("law_year"),
+            "law_suffix": meta.get("law_suffix"),
             "article": meta.get("article"),
             "section": meta.get("section") if meta.get("section") not in (None, "", "N/A") else None
         }
-        if not amender_ref["law_number"] or not amender_ref["law_year"]:
+        if not amender_ref["law_number"] or not amender_ref["law_year"] or not amender_ref["law_suffix"]:
             continue
 
         for target in amendments:
+            if not target.get("law_suffix"):
+                continue
             params = {
                 "select": "id,metadata",
                 "metadata->>law_number": f"eq.{target['law_number']}",
                 "metadata->>law_year": f"eq.{target['law_year']}",
+                "metadata->>law_suffix": f"eq.{target['law_suffix']}",
                 "metadata->>article": f"eq.{target['article']}",
             }
             if target.get("section"):
@@ -196,7 +277,7 @@ def _apply_amendments_backfill(chunks):
                         any_backfilled = True
                         target_section_str = f" Khoản {target.get('section')}" if target.get("section") else ""
                         print(f"  [+] Backfill: {meta.get('law_name')} (Điều {amender_ref['article']}) sửa đổi "
-                              f"Điều {target['article']}{target_section_str} của văn bản {target['law_number']}/{target['law_year']}")
+                              f"Điều {target['article']}{target_section_str} của văn bản {target['law_number']}/{target['law_year']}/{target['law_suffix']}")
                 except Exception as e:
                     print(f"  [!] Lỗi ghi amended_by: {e}")
 
@@ -216,10 +297,14 @@ PROVISION_TYPE_LEGEND = "\n" + "\n".join(f"- {code}: {label}" for code, label in
 
 AMENDMENTS_TO_INSTRUCTION = """
 6. Phát hiện SỬA ĐỔI/BỔ SUNG văn bản khác: Nếu nội dung chunk này nói rõ nó đang sửa đổi/bổ sung/bãi bỏ một Điều/Khoản CỤ THỂ của một văn bản pháp luật KHÁC (có nêu rõ số hiệu văn bản kiểu "68/2026/NĐ-CP"), hãy điền trường "amendments_to" là một MẢNG liệt kê từng Điều/Khoản bị sửa, mỗi phần tử có dạng:
-   {"law_number": "68", "law_year": 2026, "article": "3", "section": null}
-   (article/section lấy đúng số được nêu trong câu; nếu câu chỉ ghi "tại Điều 3, Điều 4, khoản 1 Điều 8..." thì phải tách thành NHIỀU phần tử riêng biệt, mỗi phần tử 1 Điều/Khoản; nếu sửa cả Điều không chỉ rõ Khoản thì để "section": null).
+   {"law_number": "68", "law_year": 2026, "law_suffix": "NĐ-CP", "article": "3", "section": null}
+   ("law_suffix" là phần đuôi ký hiệu văn bản đúng như trong câu, VD "68/2026/NĐ-CP" -> "NĐ-CP", "41/2024/QH15" -> "QH15", "18/2026/TT-BTC" -> "TT-BTC"; BẮT BUỘC phải có để phân biệt các văn bản trùng số/năm nhưng khác loại. Nếu câu không nêu ký hiệu thì để "law_suffix": null.
+   article/section lấy đúng số được nêu trong câu; nếu câu chỉ ghi "tại Điều 3, Điều 4, khoản 1 Điều 8..." thì phải tách thành NHIỀU phần tử riêng biệt, mỗi phần tử 1 Điều/Khoản; nếu sửa cả Điều không chỉ rõ Khoản thì để "section": null).
    Nếu chunk KHÔNG sửa đổi văn bản nào khác, để "amendments_to": [].
-7. Phân loại "provision_type" cho chunk theo danh sách sau (chọn đúng 1 mã, hoặc null nếu không rõ):
+7. Phát hiện THAY THẾ/HẾT HIỆU LỰC TOÀN BỘ văn bản khác: Nếu chunk này (thường là điều khoản thi hành/hiệu lực thi hành) nói rõ MỘT VĂN BẢN KHÁC "hết hiệu lực thi hành", "được thay thế" hoặc "bị bãi bỏ" TOÀN BỘ (không phải chỉ một Điều/Khoản - trường hợp đó thuộc "amendments_to"), hãy điền trường "supersedes" là một MẢNG, mỗi phần tử có dạng:
+   {"law_number": "58", "law_year": 2014, "law_suffix": "QH13"}
+   (law_number chỉ gồm phần số, không kèm năm hay ký hiệu loại văn bản, VD "58/2014/QH13" -> "58", 2014 và "QH13"; nếu câu không nêu ký hiệu thì để "law_suffix": null). Chỉ liệt kê văn bản được nêu rõ là hết hiệu lực toàn bộ; KHÔNG liệt kê các văn bản chỉ được nhắc tới với tư cách đã sửa đổi/bổ sung văn bản bị thay thế đó, trừ khi chính chúng cũng được nêu rõ là hết hiệu lực. Nếu chunk không có nội dung này, để "supersedes": [].
+8. Phân loại "provision_type" cho chunk theo danh sách sau (chọn đúng 1 mã, hoặc null nếu không rõ):
 """ + PROVISION_TYPE_LEGEND
 def extract_metadata_with_gemini(header_text):
     """Trích xuất tên luật, ngày ban hành và loại văn bản từ phần đầu tài liệu"""
@@ -290,48 +375,84 @@ def split_text_by_articles(text, max_chars=25000):
         
     return sections
 
+def _parse_doc_ref(target):
+    """
+    Chuẩn hóa 1 tham chiếu tới văn bản khác do AI trả về thành (law_number, law_year,
+    law_suffix). AI đôi khi trả số hiệu đầy đủ ("58/2014/QH13") thay vì số trơn ("58")
+    nên tách lại bằng regex. Trả về None nếu thiếu số/năm/ký hiệu: không có ký hiệu
+    (QH15, NĐ-CP, TT-BTC...) thì không phân biệt được các văn bản trùng số + năm nhưng
+    khác loại (VD 41/2024/QH15 và 41/2024/NĐ-CP), thà bỏ qua còn hơn ghi nhầm quan hệ.
+    """
+    law_number = str(target.get("law_number") or "")
+    law_year = target.get("law_year")
+    law_suffix = target.get("law_suffix")
+    match_t = re.search(r'(\d+)/(\d{4})(?:/([\w-]+))?', law_number)
+    if match_t:
+        law_number, law_year = match_t.group(1), match_t.group(2)
+        law_suffix = match_t.group(3) or law_suffix
+    try:
+        law_year = int(law_year)
+    except (TypeError, ValueError):
+        return None
+    law_suffix = str(law_suffix or "").strip().upper()
+    if not law_number.isdigit() or not law_suffix:
+        return None
+    return law_number, law_year, law_suffix
+
 def normalize_amendment_metadata(meta):
     """
     Chuẩn hóa metadata liên quan tới quan hệ sửa đổi văn bản của 1 chunk, SAU KHI
     Gemini đã bóc tách xong (meta["law_name"] đã được làm sạch ở bước trước đó):
-    - Tách "law_number"/"law_year" trực tiếp từ law_name bằng regex (đáng tin cậy
-      hơn để AI tự trích xuất số), dùng để so khớp chính xác khi backfill/tra cứu
-      thay vì phải "ilike" chuỗi con trong content.
-    - Lọc "amendments_to" chỉ giữ lại các mục đủ thông tin (law_number/law_year/
-      article), ép kiểu để so khớp nhất quán khi query PostgREST sau này.
+    - Tách "law_number"/"law_year"/"law_suffix" trực tiếp từ law_name bằng regex
+      (đáng tin cậy hơn để AI tự trích xuất số), dùng để so khớp chính xác khi
+      backfill/tra cứu thay vì phải "ilike" chuỗi con trong content. Bộ 3 này mới
+      định danh duy nhất 1 văn bản: 41/2024/QH15 khác 41/2024/NĐ-CP.
+    - Lọc "amendments_to"/"supersedes" chỉ giữ lại các mục đủ thông tin, ép kiểu để
+      so khớp nhất quán khi query PostgREST sau này.
     - Luôn khởi tạo "amended_by": [] - trường này CHỈ được điền bởi
       backfill_amended_by() sau khi văn bản mới được insert, không phải do AI
       bóc tách tự suy ra (lúc bóc tách 1 văn bản, ta không biết văn bản nào
       trong tương lai sẽ sửa nó).
     """
     law_name = meta.get("law_name") or ""
-    match_l = re.search(r'(\d+)/(\d{4})/[\w-]+', law_name)
+    match_l = re.search(r'(\d+)/(\d{4})/([\w-]+)', law_name)
     if match_l:
         meta["law_number"] = match_l.group(1)
         meta["law_year"] = int(match_l.group(2))
+        meta["law_suffix"] = match_l.group(3).upper()
 
     normalized_targets = []
     for target in (meta.get("amendments_to") or []):
         if not isinstance(target, dict):
             continue
-        law_number = target.get("law_number")
-        law_year = target.get("law_year")
+        ref = _parse_doc_ref(target)
         article = target.get("article")
-        if not law_number or not law_year or not article:
-            continue
-        try:
-            law_year = int(law_year)
-        except (TypeError, ValueError):
+        if not ref or not article:
             continue
         section = target.get("section")
         normalized_targets.append({
-            "law_number": str(law_number),
-            "law_year": law_year,
+            "law_number": ref[0],
+            "law_year": ref[1],
+            "law_suffix": ref[2],
             "article": str(article),
             "section": str(section) if section not in (None, "", "N/A") else None
         })
     meta["amendments_to"] = normalized_targets
     meta["amended_by"] = []
+
+    normalized_supersedes = []
+    for target in (meta.get("supersedes") or []):
+        if not isinstance(target, dict):
+            continue
+        ref = _parse_doc_ref(target)
+        if not ref:
+            continue
+        if ref == (meta.get("law_number"), meta.get("law_year"), meta.get("law_suffix")):
+            continue
+        entry = {"law_number": ref[0], "law_year": ref[1], "law_suffix": ref[2]}
+        if entry not in normalized_supersedes:
+            normalized_supersedes.append(entry)
+    meta["supersedes"] = normalized_supersedes
 
 def extract_and_chunk_with_gemini(content_parts, metadata_hint=None):
     print("\n⏳ Đang nhờ AI Gemini bóc tách tài liệu theo cấu trúc pháp luật (Điều > Khoản > Điểm)...")
@@ -395,6 +516,7 @@ def extract_and_chunk_with_gemini(content_parts, metadata_hint=None):
                     "section": "Y",
                     "type": "{law_type}",
                     "amendments_to": [],
+                    "supersedes": [],
                     "provision_type": "P1"
                 }}
               }}
@@ -472,6 +594,7 @@ def extract_and_chunk_with_gemini(content_parts, metadata_hint=None):
                 "section": "1",
                 "type": "Thông tư",
                 "amendments_to": [],
+                "supersedes": [],
                 "provision_type": "P1"
             }}
           }}
