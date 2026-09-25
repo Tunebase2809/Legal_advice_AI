@@ -119,9 +119,12 @@ npm run dev
 
 ## 👥 Đội ngũ thực hiện
 
+
 - Nguyễn Thái Tú
 - Đỗ Quốc Thắng
 - Đỗ Quốc Học
 - Dương Trần Quang Huy
-
+- Lê Hoàng Lộc
+- Lê Thị Tuấn Anh
+- Đoàn Mậu Thiên Thư
 
